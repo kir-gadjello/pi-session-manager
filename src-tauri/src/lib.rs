@@ -1,0 +1,32 @@
+mod commands;
+mod config;
+mod export;
+mod models;
+pub mod scanner;
+pub mod scanner_scheduler;
+mod search;
+mod session_parser;
+mod sqlite_cache;
+mod stats;
+mod tantivy_search;
+
+pub use commands::*;
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            scan_sessions,
+            read_session_file,
+            get_session_entries,
+            search_sessions,
+            delete_session,
+            export_session,
+            rename_session,
+            get_session_stats
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
