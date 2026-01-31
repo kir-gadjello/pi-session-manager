@@ -21,7 +21,6 @@ export default function CommandPalette({ context }: CommandPaletteProps) {
   } = useCommandMenu()
   
   const [searchCurrentProjectOnly, setSearchCurrentProjectOnly] = useState(false)
-  const inputRef = useRef<HTMLInputElement>(null)
   
   // 创建增强的 context，包含搜索范围状态
   const enhancedContext: SearchContext = {

@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
-import { Terminal, ArrowUp, ArrowDown } from 'lucide-react'
+import { ArrowUp, ArrowDown } from 'lucide-react'
 import type { SessionInfo, SessionEntry } from '../types'
 import { parseSessionEntries, computeStats } from '../utils/session'
 import { extractTextFromHTML, containsSearchQuery } from '../utils/search'
@@ -16,6 +16,7 @@ import CustomMessage from './CustomMessage'
 import SessionTree from './SessionTree'
 import SearchBar from './SearchBar'
 import OpenInTerminalButton from './OpenInTerminalButton'
+import { SessionViewProvider, useSessionView } from '../contexts/SessionViewContext'
 import '../styles/session.css'
 
 interface SessionViewerProps {
@@ -33,8 +34,9 @@ const SIDEBAR_MAX_WIDTH = 600
 const SIDEBAR_DEFAULT_WIDTH = 400
 const SIDEBAR_WIDTH_KEY = 'pi-session-manager-sidebar-width'
 
-export default function SessionViewer({ session, onExport, onRename, terminal = 'iterm2', piPath, customCommand }: SessionViewerProps) {
+function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2', piPath, customCommand }: SessionViewerProps) {
   const { t } = useTranslation()
+  const { toggleThinking, toggleToolsExpanded } = useSessionView()
   const [entries, setEntries] = useState<SessionEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -94,6 +96,26 @@ export default function SessionViewer({ session, onExport, onRename, terminal = 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
+
+  // 快捷键监听：ctrl+t 切换思考显示，ctrl+o 切换工具调用展开
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 't') {
+        e.preventDefault()
+        e.stopPropagation()
+        toggleThinking()
+        console.log('[SessionViewer] Ctrl+T triggered: toggleThinking')
+      } else if ((e.metaKey || e.ctrlKey) && e.key === 'o') {
+        e.preventDefault()
+        e.stopPropagation()
+        toggleToolsExpanded()
+        console.log('[SessionViewer] Ctrl+O triggered: toggleToolsExpanded')
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [toggleThinking, toggleToolsExpanded])
 
   // 执行搜索
   useEffect(() => {
@@ -380,6 +402,20 @@ export default function SessionViewer({ session, onExport, onRename, terminal = 
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
+              onClick={scrollToTop}
+              className="px-2 py-1 text-xs bg-[#2c2d3b] hover:bg-[#3c3d4b] rounded transition-colors cursor-pointer"
+              title={t('session.scrollToTop', '滚动到顶部')}
+            >
+              <ArrowUp className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={scrollToBottom}
+              className="px-2 py-1 text-xs bg-[#2c2d3b] hover:bg-[#3c3d4b] rounded transition-colors cursor-pointer"
+              title={t('session.scrollToBottom', '滚动到底部')}
+            >
+              <ArrowDown className="h-3.5 w-3.5" />
+            </button>
+            <button
               onClick={onRename}
               className="px-3 py-1 text-xs bg-[#2c2d3b] hover:bg-[#3c3d4b] rounded transition-colors cursor-pointer"
             >
@@ -421,7 +457,7 @@ export default function SessionViewer({ session, onExport, onRename, terminal = 
             </div>
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto session-viewer relative" ref={messagesContainerRef}>
+          <div className="flex-1 overflow-y-auto session-viewer" ref={messagesContainerRef}>
             <SessionHeader
               sessionId={headerEntry?.id || session.id}
               timestamp={headerEntry?.timestamp}
@@ -434,27 +470,17 @@ export default function SessionViewer({ session, onExport, onRename, terminal = 
                 <div className="empty-state">{t('session.noMessages')}</div>
               )}
             </div>
-
-            {/* 滚动按钮 - 固定在右下角 */}
-            <div className="absolute bottom-4 right-4 flex flex-col gap-2">
-              <button
-                onClick={scrollToTop}
-                className="p-2 bg-[#2c2d3b] hover:bg-[#3c3d4b] text-[#6a6f85] hover:text-white rounded-lg shadow-lg transition-all"
-                title={t('session.scrollToTop', '滚动到顶部')}
-              >
-                <ArrowUp className="h-4 w-4" />
-              </button>
-              <button
-                onClick={scrollToBottom}
-                className="p-2 bg-[#2c2d3b] hover:bg-[#3c3d4b] text-[#6a6f85] hover:text-white rounded-lg shadow-lg transition-all"
-                title={t('session.scrollToBottom', '滚动到底部')}
-              >
-                <ArrowDown className="h-4 w-4" />
-              </button>
-            </div>
           </div>
         )}
       </div>
     </div>
+  )
+}
+
+export default function SessionViewer(props: SessionViewerProps) {
+  return (
+    <SessionViewProvider>
+      <SessionViewerContent {...props} />
+    </SessionViewProvider>
   )
 }
