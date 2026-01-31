@@ -6,16 +6,16 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { invoke } from '@tauri-apps/api/core'
 import { Loader2, Puzzle, FileText, Power, PowerOff } from 'lucide-react'
-import type { SkillInfo, PromptInfo, PiSettings } from '../../../types'
+import type { SkillInfo, PromptInfo } from '../../../types'
 
 export default function PiConfigSettings() {
   const { t } = useTranslation()
   const [skills, setSkills] = useState<SkillInfo[]>([])
   const [prompts, setPrompts] = useState<PromptInfo[]>([])
-  const [piSettings, setPiSettings] = useState<PiSettings>({ skills: [], prompts: [], extensions: [] })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [activeTab, setActiveTab] = useState<'skills' | 'prompts'>('skills')
+  const [settingsData, setSettingsData] = useState<any>({ skills: [], prompts: [] })
 
   useEffect(() => {
     loadData()
@@ -24,23 +24,22 @@ export default function PiConfigSettings() {
   const loadData = async () => {
     setLoading(true)
     try {
-      const [skillsData, promptsData, settingsData] = await Promise.all([
+      const [skillsData, promptsData] = await Promise.all([
         invoke<SkillInfo[]>('scan_skills'),
         invoke<PromptInfo[]>('scan_prompts'),
-        invoke<PiSettings>('load_pi_settings'),
       ])
 
       // 根据 settings.json 中的配置标记启用/禁用状态
-      const enabledSkills = new Set(settingsData.skills.map(s => s.replace(/^-/, '')))
-      const disabledSkills = new Set(settingsData.skills.filter(s => s.startsWith('-')).map(s => s.slice(1)))
+      const enabledSkills = new Set(settingsData.skills.map((s: string) => s.replace(/^-/, '')))
+      const disabledSkills = new Set(settingsData.skills.filter((s: string) => s.startsWith('-')).map((s: string) => s.slice(1)))
 
       const skillsWithStatus = skillsData.map(skill => ({
         ...skill,
         enabled: disabledSkills.has(skill.path) ? false : enabledSkills.has(skill.path) || skill.enabled,
       }))
 
-      const enabledPrompts = new Set(settingsData.prompts.map(p => p.replace(/^-/, '')))
-      const disabledPrompts = new Set(settingsData.prompts.filter(p => p.startsWith('-')).map(p => p.slice(1)))
+      const enabledPrompts = new Set(settingsData.prompts.map((p: string) => p.replace(/^-/, '')))
+      const disabledPrompts = new Set(settingsData.prompts.filter((p: string) => p.startsWith('-')).map((p: string) => p.slice(1)))
 
       const promptsWithStatus = promptsData.map(prompt => ({
         ...prompt,
@@ -49,7 +48,7 @@ export default function PiConfigSettings() {
 
       setSkills(skillsWithStatus)
       setPrompts(promptsWithStatus)
-      setPiSettings(settingsData)
+      setSettingsData(settingsData)
     } catch (error) {
       console.error('Failed to load Pi config:', error)
     } finally {

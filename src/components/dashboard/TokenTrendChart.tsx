@@ -1,7 +1,7 @@
 import { TrendingUp, Zap } from 'lucide-react'
 import type { SessionStats } from '../../types'
-import { format, parseISO, subDays } from 'date-fns'
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts'
+import { format, subDays } from 'date-fns'
+import { XAxis, YAxis, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts'
 
 interface TokenTrendChartProps {
   stats: SessionStats
@@ -43,7 +43,6 @@ export default function TokenTrendChart({ stats, title = 'Token Usage Trend', da
   }
 
   const dailyData = generateDailyTokenData()
-  const maxTokens = Math.max(...dailyData.map(d => d.tokens), 1)
   const totalPeriodTokens = dailyData.reduce((sum, d) => sum + d.tokens, 0)
   const totalPeriodCost = dailyData.reduce((sum, d) => sum + d.cost, 0)
 

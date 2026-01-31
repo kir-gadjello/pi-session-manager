@@ -2,7 +2,6 @@ import type { SessionInfo } from '../types'
 import { FolderOpen, Loader2, ArrowLeft } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { formatDistanceToNow } from 'date-fns'
 import OpenInTerminalButton from './OpenInTerminalButton'
 import { SessionBadge } from './SessionBadge'
 

@@ -24,7 +24,6 @@ export default function SessionList({
   onSelectSession,
   onDeleteSession,
   loading,
-  searchQuery,
   getBadgeType,
   terminal = 'iterm2',
   piPath,

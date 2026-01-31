@@ -14,7 +14,6 @@ import {
   Clock,
   Zap,
   Search,
-  ChevronRight,
   ExternalLink,
 } from 'lucide-react'
 
@@ -254,7 +253,7 @@ export default function ModelSettings() {
             {t('settings.models.noModels', '未找到模型')}
           </div>
         ) : (
-          filteredModels.map((model, index) => (
+          filteredModels.map((model) => (
             <div
               key={`${model.provider}/${model.model}`}
               className="flex items-center gap-3 p-3 rounded-lg border border-[#2c2d3b] hover:border-[#3a3b4f] transition-all cursor-pointer"

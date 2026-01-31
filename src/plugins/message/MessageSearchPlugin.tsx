@@ -15,6 +15,12 @@ export class MessageSearchPlugin extends BaseSearchPlugin {
   description = '搜索用户消息和助手回复'
   keywords = ['message', 'content', 'text', 'conversation', '消息', '内容', '对话']
   priority = 80
+
+  private truncateText(text: string, maxLength: number): string {
+    if (!text) return ''
+    if (text.length <= maxLength) return text
+    return text.slice(0, maxLength) + '...'
+  }
   
   async search(
     query: string,
@@ -72,8 +78,12 @@ export class MessageSearchPlugin extends BaseSearchPlugin {
   }
   
   onSelect(result: SearchPluginResult, context: SearchContext): void {
+    if (!result.metadata?.session) {
+      console.warn('[MessageSearchPlugin] Result metadata is missing')
+      return
+    }
     const session = result.metadata.session as SessionInfo
-    context.setSelectedSession(session.id)
+    context.setSelectedSession(session)
     context.setSelectedProject(session.cwd)
     context.closeCommandMenu()
   }

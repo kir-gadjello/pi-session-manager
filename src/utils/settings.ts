@@ -70,9 +70,9 @@ export function mergeSettings(base: AppSettings, override: Partial<AppSettings>)
  * 验证设置值
  */
 export function validateSettingValue(
-  section: string,
-  key: string,
-  value: unknown
+  _section: string,
+  _key: string,
+  _value: unknown
 ): ValidationError | null {
   // TODO: 实现验证逻辑
   return null
@@ -81,7 +81,7 @@ export function validateSettingValue(
 /**
  * 格式化设置值用于显示
  */
-export function formatSettingValue(section: string, key: string, value: unknown): string {
+export function formatSettingValue(_section: string, _key: string, value: unknown): string {
   if (typeof value === 'boolean') {
     return value ? '启用' : '禁用'
   }
@@ -97,7 +97,7 @@ export function formatSettingValue(section: string, key: string, value: unknown)
 /**
  * 解析设置值从字符串
  */
-export function parseSettingValue(section: string, key: string, value: string): unknown {
+export function parseSettingValue(_section: string, _key: string, value: string): unknown {
   // TODO: 实现解析逻辑
   return value
 }
@@ -105,7 +105,7 @@ export function parseSettingValue(section: string, key: string, value: string): 
 /**
  * 获取设置的默认值
  */
-export function getSettingDefaultValue(section: string, key: string): unknown {
+export function getSettingDefaultValue(_section: string, _key: string): unknown {
   // TODO: 实现获取默认值逻辑
   return null
 }
@@ -114,8 +114,8 @@ export function getSettingDefaultValue(section: string, key: string): unknown {
  * 检查设置是否被修改
  */
 export function isSettingModified(
-  current: AppSettings,
-  original: AppSettings
+  _current: AppSettings,
+  _original: AppSettings
 ): { modified: boolean; modifiedFields: string[] } {
   const modifiedFields: string[] = []
 
@@ -130,7 +130,7 @@ export function isSettingModified(
 /**
  * 重置设置到默认值
  */
-export function resetSectionToDefault(section: keyof AppSettings): Partial<AppSettings> {
+export function resetSectionToDefault(_section: keyof AppSettings): Partial<AppSettings> {
   // TODO: 实现重置逻辑
   return {}
 }
@@ -156,7 +156,7 @@ export function importSettingsFromJson(json: string): AppSettings | null {
 /**
  * 检查设置版本兼容性
  */
-export function checkSettingsCompatibility(version: string): boolean {
+export function checkSettingsCompatibility(_version: string): boolean {
   // TODO: 实现版本检查
   return true
 }

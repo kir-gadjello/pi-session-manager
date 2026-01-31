@@ -29,7 +29,6 @@ interface FlatNode {
 export default function SessionTree({
   entries,
   activeLeafId,
-  targetId,
   onNodeClick,
   filter = 'default'
 }: SessionTreeProps) {

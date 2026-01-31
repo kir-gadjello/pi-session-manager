@@ -161,14 +161,14 @@ export function useSettings() {
  * 提供设置验证功能
  */
 export function useSettingsValidation() {
-  const { validateSettings } = require('../types/settings')
+  const { validateSettings: _validateSettings } = require('../types/settings')
 
-  const validate = (settings: AppSettings): ValidationError[] => {
+  const validate = (_settings: AppSettings): ValidationError[] => {
     // TODO: 实现验证逻辑
     return []
   }
 
-  const validateField = (field: string, value: unknown): ValidationError | null => {
+  const validateField = (_field: string, _value: unknown): ValidationError | null => {
     // TODO: 实现字段验证
     return null
   }
@@ -186,7 +186,7 @@ export function useSettingsValidation() {
 export function useSettingsImportExport() {
   const { settings } = useSettingsContext()
 
-  const exportSettings = async (format: 'json' | 'yaml'): Promise<string> => {
+  const exportSettings = async (_format: 'json' | 'yaml'): Promise<string> => {
     // TODO: 实现导出逻辑
     const exportData = {
       version: '1.0.0',
@@ -196,9 +196,9 @@ export function useSettingsImportExport() {
     return JSON.stringify(exportData, null, 2)
   }
 
-  const importSettings = async (data: string): Promise<void> => {
+  const importSettings = async (_data: string): Promise<void> => {
     // TODO: 实现导入逻辑
-    const parsed = JSON.parse(data)
+    // const parsed = JSON.parse(data)
     // 验证并应用设置
   }
 

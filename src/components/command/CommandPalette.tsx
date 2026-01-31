@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useCommandMenu } from '../../hooks/useCommandMenu'
 import type { SearchContext } from '../../plugins/types'
 import CommandMenu from './CommandMenu'
