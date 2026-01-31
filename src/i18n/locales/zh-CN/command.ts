@@ -5,6 +5,10 @@ export const command = {
   loading: '搜索中...',
   error: '搜索出错',
   errorHint: '请稍后重试或查看控制台日志',
+  searchCurrentProject: '只搜索当前项目',
+  searchAllProjects: '搜索所有项目',
+  noProjectSelected: '请先选择项目',
+  allProjects: '所有项目',
   shortcuts: {
     open: '打开命令面板',
     close: '关闭',

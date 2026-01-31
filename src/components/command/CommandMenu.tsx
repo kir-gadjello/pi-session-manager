@@ -1,5 +1,5 @@
 import { Command } from 'cmdk'
-import { Search, Loader2 } from 'lucide-react'
+import { Search, Loader2, FolderOpen } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useEffect, useRef, useState } from 'react'
 import type { SearchPluginResult, SearchContext } from '../../plugins/types'
@@ -19,6 +19,8 @@ interface CommandMenuProps {
   setIsSearching: (isSearching: boolean) => void
   context: SearchContext
   onClose: () => void
+  searchCurrentProjectOnly: boolean
+  setSearchCurrentProjectOnly: (value: boolean) => void
 }
 
 export default function CommandMenu({
@@ -29,13 +31,23 @@ export default function CommandMenu({
   isSearching,
   setIsSearching,
   context,
-  onClose
+  onClose,
+  searchCurrentProjectOnly,
+  setSearchCurrentProjectOnly
 }: CommandMenuProps) {
   const { t } = useTranslation()
   const { registry, search } = useSearchPlugins(context)
   const debounceRef = useRef<NodeJS.Timeout>()
   const abortControllerRef = useRef<AbortController>()
   const [searchError, setSearchError] = useState<string | undefined>()
+  
+  // 获取当前项目名称
+  const currentProjectName = context.selectedProject 
+    ? context.selectedProject.split('/').pop() || context.selectedProject
+    : null
+  
+  console.log('[CommandMenu] selectedProject:', context.selectedProject)
+  console.log('[CommandMenu] currentProjectName:', currentProjectName)
   
   // 防抖搜索
   useEffect(() => {
@@ -137,6 +149,38 @@ export default function CommandMenu({
         {isSearching && (
           <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
         )}
+        
+        {/* 当前项目过滤按钮 - 始终显示 */}
+        <button
+          onClick={() => {
+            if (currentProjectName) {
+              setSearchCurrentProjectOnly(!searchCurrentProjectOnly)
+            }
+          }}
+          disabled={!currentProjectName}
+          className={`
+            flex items-center gap-1.5 px-2.5 py-1 text-xs rounded transition-colors
+            ${!currentProjectName 
+              ? 'bg-[#1f2029] text-muted-foreground/50 cursor-not-allowed border border-[#2a2b36]'
+              : searchCurrentProjectOnly 
+                ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30' 
+                : 'bg-[#252636] text-muted-foreground hover:bg-[#2a2b36] border border-transparent'
+            }
+          `}
+          title={
+            !currentProjectName
+              ? t('command.noProjectSelected', '请先选择项目')
+              : searchCurrentProjectOnly 
+                ? t('command.searchAllProjects', '搜索所有项目') 
+                : t('command.searchCurrentProject', '只搜索当前项目')
+          }
+        >
+          <FolderOpen className="w-3.5 h-3.5" />
+          <span className="max-w-[100px] truncate">
+            {currentProjectName || t('command.allProjects', '所有项目')}
+          </span>
+        </button>
+        
         <kbd className="px-2 py-1 text-xs text-muted-foreground bg-[#252636] rounded">
           ESC
         </kbd>

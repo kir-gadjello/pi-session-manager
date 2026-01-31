@@ -91,6 +91,9 @@ export interface SearchContext {
   /** 当前选中的会话 */
   selectedSession: SessionInfo | null
   
+  /** 是否只搜索当前项目 */
+  searchCurrentProjectOnly: boolean
+  
   // ========== 方法 ==========
   
   /** 设置选中的会话 */

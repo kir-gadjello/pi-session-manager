@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useCommandMenu } from '../../hooks/useCommandMenu'
 import type { SearchContext } from '../../plugins/types'
 import CommandMenu from './CommandMenu'
@@ -20,7 +20,14 @@ export default function CommandPalette({ context }: CommandPaletteProps) {
     setIsSearching
   } = useCommandMenu()
   
+  const [searchCurrentProjectOnly, setSearchCurrentProjectOnly] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  
+  // 创建增强的 context，包含搜索范围状态
+  const enhancedContext: SearchContext = {
+    ...context,
+    searchCurrentProjectOnly
+  }
   
   // 全局快捷键
   useEffect(() => {
@@ -73,8 +80,10 @@ export default function CommandPalette({ context }: CommandPaletteProps) {
           setResults={setResults}
           isSearching={isSearching}
           setIsSearching={setIsSearching}
-          context={context}
+          context={enhancedContext}
           onClose={close}
+          searchCurrentProjectOnly={searchCurrentProjectOnly}
+          setSearchCurrentProjectOnly={setSearchCurrentProjectOnly}
         />
       </div>
     </div>

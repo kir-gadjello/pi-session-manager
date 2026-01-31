@@ -5,6 +5,10 @@ export const command = {
   loading: 'Searching...',
   error: 'Search Error',
   errorHint: 'Please try again later or check console logs',
+  searchCurrentProject: 'Search current project only',
+  searchAllProjects: 'Search all projects',
+  noProjectSelected: 'Please select a project first',
+  allProjects: 'All Projects',
   shortcuts: {
     open: 'Open command palette',
     close: 'Close',

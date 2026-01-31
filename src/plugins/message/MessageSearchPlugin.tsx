@@ -21,6 +21,7 @@ export class MessageSearchPlugin extends BaseSearchPlugin {
     context: SearchContext
   ): Promise<SearchPluginResult[]> {
     console.log('[MessageSearchPlugin] Starting FTS5 search for:', query)
+    console.log('[MessageSearchPlugin] Search current project only:', context.searchCurrentProjectOnly)
     
     try {
       // 使用 SQLite FTS5 搜索，快速且高效
@@ -31,8 +32,15 @@ export class MessageSearchPlugin extends BaseSearchPlugin {
       
       console.log('[MessageSearchPlugin] FTS5 returned sessions:', sessions.length)
       
+      // 如果启用了"只搜索当前项目"，过滤结果
+      const filteredSessions = context.searchCurrentProjectOnly && context.selectedProject
+        ? sessions.filter(s => s.cwd === context.selectedProject)
+        : sessions
+      
+      console.log('[MessageSearchPlugin] After project filter:', filteredSessions.length)
+      
       // 转换为插件结果格式
-      const pluginResults = sessions.map(session => {
+      const pluginResults = filteredSessions.map(session => {
         const score = this.fuzzyMatch(query, session.all_messages_text)
         
         return {

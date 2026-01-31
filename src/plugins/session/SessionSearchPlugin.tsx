@@ -19,11 +19,19 @@ export class SessionSearchPlugin extends BaseSearchPlugin {
     context: SearchContext
   ): Promise<SearchPluginResult[]> {
     console.log('[SessionSearchPlugin] Starting search for:', query)
+    console.log('[SessionSearchPlugin] Search current project only:', context.searchCurrentProjectOnly)
     
     try {
       const results: SearchPluginResult[] = []
       
-      for (const session of context.sessions) {
+      // 如果启用了"只搜索当前项目"，过滤会话列表
+      const sessionsToSearch = context.searchCurrentProjectOnly && context.selectedProject
+        ? context.sessions.filter(s => s.cwd === context.selectedProject)
+        : context.sessions
+      
+      console.log('[SessionSearchPlugin] Searching in sessions:', sessionsToSearch.length)
+      
+      for (const session of sessionsToSearch) {
         // 搜索会话名称
         const nameScore = session.name 
           ? this.fuzzyMatch(query, session.name)
