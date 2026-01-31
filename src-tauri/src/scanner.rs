@@ -2,7 +2,6 @@ use crate::config::Config;
 use crate::models::SessionInfo;
 use crate::sqlite_cache;
 use chrono::{DateTime, Duration, Utc};
-use regex::Regex;
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -71,7 +70,7 @@ pub async fn scan_sessions_with_config(config: &Config) -> Result<Vec<SessionInf
         }
     }
 
-    let historical_sessions = sqlite_cache::get_sessions_modified_after(&conn, realtime_cutoff)?;
+    let historical_sessions = sqlite_cache::get_sessions_modified_before(&conn, realtime_cutoff)?;
 
     for session in historical_sessions {
         if !sessions.iter().any(|s| s.path == session.path) {
@@ -121,6 +120,8 @@ pub fn parse_session_info(path: &Path) -> Result<SessionInfo, String> {
     let mut first_message = String::new();
     let mut all_messages = Vec::new();
     let mut name: Option<String> = None;
+    let mut last_message = String::new();
+    let mut last_message_role = String::new();
 
     for line in &lines[1..] {
         if line.trim().is_empty() {
@@ -145,6 +146,9 @@ pub fn parse_session_info(path: &Path) -> Result<SessionInfo, String> {
                         if first_message.is_empty() && role == "user" {
                             first_message = text.chars().take(100).collect();
                         }
+                        // 更新最后一条消息
+                        last_message = text.chars().take(150).collect();
+                        last_message_role = role.to_string();
                     }
                 }
             }
@@ -163,6 +167,8 @@ pub fn parse_session_info(path: &Path) -> Result<SessionInfo, String> {
         message_count,
         first_message,
         all_messages_text,
+        last_message,
+        last_message_role,
     })
 }
 

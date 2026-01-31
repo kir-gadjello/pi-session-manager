@@ -72,8 +72,8 @@ fn matches_session_name(session: &SessionInfo, query_words: &[&str]) -> bool {
     let first_msg_lower = session.first_message.to_lowercase();
     let combined = format!("{} {}", name_lower, first_msg_lower);
 
-    // Any word matches (OR logic)
-    query_words.iter().any(|word| combined.contains(word))
+    // All words must match (AND logic) for more precise name search
+    query_words.iter().all(|word| combined.contains(word))
 }
 
 fn find_matches(

@@ -1,10 +1,10 @@
-mod commands;
-mod config;
+pub mod commands;
+pub mod config;
 mod export;
-mod models;
+pub mod models;
 pub mod scanner;
 pub mod scanner_scheduler;
-mod search;
+pub mod search;
 mod session_parser;
 mod sqlite_cache;
 mod stats;
@@ -22,10 +22,20 @@ pub fn run() {
             read_session_file,
             get_session_entries,
             search_sessions,
+            search_sessions_fts,
             delete_session,
             export_session,
             rename_session,
-            get_session_stats
+            get_session_stats,
+            open_session_in_browser,
+            open_session_in_terminal,
+            scan_skills,
+            scan_prompts,
+            load_pi_settings,
+            save_pi_settings,
+            list_models,
+            test_model,
+            test_models_batch
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

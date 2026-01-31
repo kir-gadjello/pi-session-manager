@@ -17,11 +17,13 @@
       "resizable": true,
       "fullscreen": false,
       "minWidth": 1000,
-      "minHeight": 600
+      "minHeight": 600,
+      "devtools": true
     }],
     "security": {
       "csp": null
-    }
+    },
+    "withGlobalTauri": true
   },
   "bundle": {
     "active": true,

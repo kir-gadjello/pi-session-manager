@@ -1,4 +1,3 @@
-use crate::models::SessionEntry;
 use serde_json::Value;
 
 /// Parse session file to extract detailed statistics

@@ -12,6 +12,8 @@ pub struct SessionInfo {
     pub message_count: usize,
     pub first_message: String,
     pub all_messages_text: String,
+    pub last_message: String,
+    pub last_message_role: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

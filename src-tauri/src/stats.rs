@@ -82,7 +82,7 @@ pub fn calculate_stats(sessions: &[SessionInfo]) -> SessionStats {
     let mut total_cache_read = 0usize;
     let mut total_cache_write = 0usize;
     let mut total_cost = 0.0f64;
-    let mut tokens_by_model: HashMap<String, ModelTokenStats> = HashMap::new();
+    let tokens_by_model: HashMap<String, ModelTokenStats> = HashMap::new();
 
     for session in sessions {
         // Extract project from cwd

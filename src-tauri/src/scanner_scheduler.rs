@@ -116,7 +116,7 @@ impl ScannerScheduler {
 
     async fn auto_cleanup(&self) -> Result<String, String> {
         if let Some(cleanup_days) = self.config.auto_cleanup_days {
-            let cutoff = Utc::now() - Duration::days(cleanup_days);
+            let _cutoff = Utc::now() - Duration::days(cleanup_days);
 
             let conn = sqlite_cache::init_db_with_config(&self.config)?;
             let deleted = sqlite_cache::cleanup_missing_files(&conn)?;
