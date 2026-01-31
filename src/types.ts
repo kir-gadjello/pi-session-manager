@@ -8,6 +8,8 @@ export interface SessionInfo {
   message_count: number
   first_message: string
   all_messages_text: string
+  last_message: string
+  last_message_role: string
 }
 
 export interface ToolResult {
@@ -159,4 +161,25 @@ export interface DailyActivity {
   date: string
   message_count: number
   session_count: number
+}
+
+// Pi Settings types
+export interface SkillInfo {
+  name: string
+  path: string
+  description: string
+  enabled: boolean
+}
+
+export interface PromptInfo {
+  name: string
+  path: string
+  description: string
+  enabled: boolean
+}
+
+export interface PiSettings {
+  skills: string[]
+  prompts: string[]
+  extensions: string[]
 }

@@ -1,10 +1,60 @@
 import { marked } from 'marked'
 import hljs from 'highlight.js'
 
+// 自定义渲染器
+const renderer = new marked.Renderer()
+
+// 自定义代码块渲染
+renderer.code = function({ text, lang }: { text: string; lang?: string }): string {
+  const language = lang || ''
+  const validLang = language && hljs.getLanguage(language) ? language : ''
+  
+  // 高亮代码
+  let highlightedCode = text
+  if (validLang) {
+    try {
+      highlightedCode = hljs.highlight(text, { language: validLang }).value
+    } catch (err) {
+      // Fall through
+    }
+  } else {
+    highlightedCode = hljs.highlightAuto(text).value
+  }
+  
+  // 计算行数
+  const lines = text.split('\n')
+  const lineCount = lines.length
+  
+  // 生成行号
+  const lineNumbers = Array.from({ length: lineCount }, (_, i) => 
+    `<div class="code-line-number">${i + 1}</div>`
+  ).join('')
+  
+  // 返回完整的代码块 HTML
+  return `
+    <div class="code-block-wrapper">
+      <div class="code-block-header">
+        ${language ? `<div class="code-language">${language}</div>` : '<div class="code-language">code</div>'}
+        <button class="code-copy-button" onclick="copyCode(this)" title="Copy code">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+          <span class="code-copy-text">Copy</span>
+        </button>
+      </div>
+      <div class="code-block-content">
+        <div class="code-line-numbers">${lineNumbers}</div>
+        <pre class="code-block"><code class="hljs ${validLang}">${highlightedCode}</code></pre>
+      </div>
+    </div>
+  `
+}
+
 // 配置 marked
 marked.setOptions({
   breaks: true,
   gfm: true,
+  renderer: renderer,
 })
 
 export function parseMarkdown(text: string): string {
