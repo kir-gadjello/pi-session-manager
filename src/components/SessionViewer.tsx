@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
+import { Terminal, ArrowUp, ArrowDown } from 'lucide-react'
 import type { SessionInfo, SessionEntry } from '../types'
 import { parseSessionEntries, computeStats } from '../utils/session'
 import { extractTextFromHTML, containsSearchQuery } from '../utils/search'
@@ -14,6 +15,7 @@ import BranchSummary from './BranchSummary'
 import CustomMessage from './CustomMessage'
 import SessionTree from './SessionTree'
 import SearchBar from './SearchBar'
+import OpenInTerminalButton from './OpenInTerminalButton'
 import '../styles/session.css'
 
 interface SessionViewerProps {
@@ -21,6 +23,9 @@ interface SessionViewerProps {
   onExport: () => void
   onRename: () => void
   onBack?: () => void
+  terminal?: 'iterm2' | 'terminal' | 'vscode' | 'custom'
+  piPath?: string
+  customCommand?: string
 }
 
 const SIDEBAR_MIN_WIDTH = 200
@@ -28,7 +33,7 @@ const SIDEBAR_MAX_WIDTH = 600
 const SIDEBAR_DEFAULT_WIDTH = 400
 const SIDEBAR_WIDTH_KEY = 'pi-session-manager-sidebar-width'
 
-export default function SessionViewer({ session, onExport, onRename }: SessionViewerProps) {
+export default function SessionViewer({ session, onExport, onRename, terminal = 'iterm2', piPath, customCommand }: SessionViewerProps) {
   const { t } = useTranslation()
   const [entries, setEntries] = useState<SessionEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -52,6 +57,26 @@ export default function SessionViewer({ session, onExport, onRename }: SessionVi
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const sidebarRef = useRef<HTMLDivElement>(null)
   const resizeHandleRef = useRef<HTMLDivElement>(null)
+
+  // 滚动到顶部
+  const scrollToTop = useCallback(() => {
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTo({
+        top: 0,
+        behavior: 'smooth'
+      })
+    }
+  }, [])
+
+  // 滚动到底部
+  const scrollToBottom = useCallback(() => {
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTo({
+        top: messagesContainerRef.current.scrollHeight,
+        behavior: 'smooth'
+      })
+    }
+  }, [])
 
   useEffect(() => {
     loadSession()
@@ -369,6 +394,18 @@ export default function SessionViewer({ session, onExport, onRename }: SessionVi
             >
               {t('common.export')}
             </button>
+            <OpenInTerminalButton
+              session={session}
+              terminal={terminal}
+              piPath={piPath}
+              customCommand={customCommand}
+              size="sm"
+              variant="default"
+              label={t('session.resume', '恢复')}
+              showLabel={true}
+              className="px-3 py-1"
+              onError={(error) => console.error('[SessionViewer] Failed to open in terminal:', error)}
+            />
           </div>
         </div>
 
@@ -384,7 +421,7 @@ export default function SessionViewer({ session, onExport, onRename }: SessionVi
             </div>
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto session-viewer" ref={messagesContainerRef}>
+          <div className="flex-1 overflow-y-auto session-viewer relative" ref={messagesContainerRef}>
             <SessionHeader
               sessionId={headerEntry?.id || session.id}
               timestamp={headerEntry?.timestamp}
@@ -396,6 +433,24 @@ export default function SessionViewer({ session, onExport, onRename }: SessionVi
               ) : (
                 <div className="empty-state">{t('session.noMessages')}</div>
               )}
+            </div>
+
+            {/* 滚动按钮 - 固定在右下角 */}
+            <div className="absolute bottom-4 right-4 flex flex-col gap-2">
+              <button
+                onClick={scrollToTop}
+                className="p-2 bg-[#2c2d3b] hover:bg-[#3c3d4b] text-[#6a6f85] hover:text-white rounded-lg shadow-lg transition-all"
+                title={t('session.scrollToTop', '滚动到顶部')}
+              >
+                <ArrowUp className="h-4 w-4" />
+              </button>
+              <button
+                onClick={scrollToBottom}
+                className="p-2 bg-[#2c2d3b] hover:bg-[#3c3d4b] text-[#6a6f85] hover:text-white rounded-lg shadow-lg transition-all"
+                title={t('session.scrollToBottom', '滚动到底部')}
+              >
+                <ArrowDown className="h-4 w-4" />
+              </button>
             </div>
           </div>
         )}

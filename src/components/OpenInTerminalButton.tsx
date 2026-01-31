@@ -12,8 +12,11 @@ interface OpenInTerminalButtonProps {
   size?: 'sm' | 'md' | 'lg'
   variant?: 'default' | 'outline' | 'ghost'
   className?: string
+  label?: string
+  showLabel?: boolean
   onSuccess?: () => void
   onError?: (error: string) => void
+  children?: React.ReactNode
 }
 
 export default function OpenInTerminalButton({
@@ -24,8 +27,11 @@ export default function OpenInTerminalButton({
   size = 'sm',
   variant = 'ghost',
   className = '',
+  label,
+  showLabel = false,
   onSuccess,
   onError,
+  children,
 }: OpenInTerminalButtonProps) {
   const { t } = useTranslation()
   const [loading, setLoading] = useState(false)
@@ -76,7 +82,7 @@ export default function OpenInTerminalButton({
       onClick={handleOpenInTerminal}
       disabled={loading}
       className={`
-        rounded-md transition-all duration-200
+        rounded-md transition-all duration-200 flex items-center gap-1.5
         disabled:opacity-50 disabled:cursor-not-allowed
         ${sizeClasses[size]}
         ${variantClasses[variant]}
@@ -87,7 +93,14 @@ export default function OpenInTerminalButton({
       {loading ? (
         <Loader2 className={`${iconSizes[size]} animate-spin`} />
       ) : (
-        <Terminal className={iconSizes[size]} />
+        <>
+          <Terminal className={iconSizes[size]} />
+          {(showLabel || label || children) && (
+            <span className="text-xs">
+              {children || label || t('session.resume', '恢复')}
+            </span>
+          )}
+        </>
       )}
     </button>
   )

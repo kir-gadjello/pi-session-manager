@@ -1,6 +1,9 @@
 export const session = {
   openInBrowser: 'Open in Browser',
   openInTerminal: 'Open in Terminal (iTerm2)',
+  resume: 'Resume',
+  scrollToTop: 'Scroll to top',
+  scrollToBottom: 'Scroll to bottom',
   list: {
     empty: 'No sessions found',
     loading: 'Loading sessions...',

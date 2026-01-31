@@ -1,6 +1,9 @@
 export const session = {
   openInBrowser: '在浏览器中打开',
   openInTerminal: '在终端中打开 (iTerm2)',
+  resume: '恢复',
+  scrollToTop: '滚动到顶部',
+  scrollToBottom: '滚动到底部',
   list: {
     empty: '未找到会话',
     loading: '加载会话中...',
