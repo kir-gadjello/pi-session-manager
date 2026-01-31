@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useRef } from 'react'
 import { pluginRegistry } from '../plugins/registry'
 import type { SearchPluginResult, SearchContext } from '../plugins/types'
 import { useSearchCache } from './useSearchCache'
@@ -8,6 +8,10 @@ import { useSearchCache } from './useSearchCache'
  */
 export function useSearchPlugins(context: SearchContext) {
   const cache = useSearchCache()
+  const contextRef = useRef(context)
+  
+  // 更新 context ref
+  contextRef.current = context
   
   /**
    * 执行搜索
@@ -28,13 +32,13 @@ export function useSearchPlugins(context: SearchContext) {
     
     // 执行搜索
     console.log('[useSearchPlugins] Searching:', query)
-    const results = await pluginRegistry.search(query, context)
+    const results = await pluginRegistry.search(query, contextRef.current)
     
     // 缓存结果
     cache.set(query, results)
     
     return results
-  }, [context, cache])
+  }, [cache])
   
   return {
     registry: pluginRegistry,
