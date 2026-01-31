@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { save } from '@tauri-apps/plugin-dialog'
 import { useTranslation } from 'react-i18next'
-import { FolderOpen, Home } from 'lucide-react'
+import { BarChart3, FolderOpen, Settings } from 'lucide-react'
 import SessionList from './components/SessionList'
 import SessionListByDirectory from './components/SessionListByDirectory'
 import ProjectList from './components/ProjectList'
@@ -12,8 +12,12 @@ import ExportDialog from './components/ExportDialog'
 import RenameDialog from './components/RenameDialog'
 import Dashboard from './components/Dashboard'
 import LanguageSwitcher from './components/LanguageSwitcher'
+import SettingsPanel from './components/settings/SettingsPanel'
+import { CommandPalette } from './components/command'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
+import { registerBuiltinPlugins } from './plugins'
 import type { SessionInfo, SearchResult } from './types'
+import type { SearchContext } from './plugins/types'
 
 function App() {
   const { t } = useTranslation()
@@ -25,14 +29,18 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [showRenameDialog, setShowRenameDialog] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const [viewMode, setViewMode] = useState<'list' | 'directory' | 'project'>('project')
 
   // Keyboard shortcuts
   const shortcuts = useCallback(() => ({
     'cmd+r': () => loadSessions(),
     'cmd+f': () => document.querySelector<HTMLInputElement>('input[type="text"]')?.focus(),
+    'cmd+,': () => setShowSettings(true),
     'escape': () => {
-      if (selectedProject) {
+      if (showSettings) {
+        setShowSettings(false)
+      } else if (selectedProject) {
         setSelectedProject(null)
       } else {
         setSelectedSession(null)
@@ -41,29 +49,54 @@ function App() {
         setShowExportDialog(false)
       }
     },
-  }), [selectedProject])
+  }), [selectedProject, showSettings])
 
   useKeyboardShortcuts(shortcuts())
+
+  // 注册内置插件
+  useEffect(() => {
+    registerBuiltinPlugins()
+  }, [])
+
+  // 创建 SearchContext
+  const commandContext = useMemo<SearchContext>(() => ({
+    sessions,
+    selectedProject,
+    selectedSession,
+    setSelectedSession,
+    setSelectedProject,
+    closeCommandMenu: () => {}, // 由 CommandPalette 内部处理
+    t
+  }), [sessions, selectedProject, selectedSession, t])
 
   useEffect(() => {
     loadSessions()
   }, [])
 
   const loadSessions = async () => {
+    console.log('[App] loadSessions called')
     try {
       setLoading(true)
+      console.log('[App] Invoking scan_sessions...')
       const result = await invoke<SessionInfo[]>('scan_sessions')
+      console.log('[App] scan_sessions returned', result.length, 'sessions')
       setSessions(result)
+      console.log('[App] Sessions state updated')
     } catch (error) {
-      console.error('Failed to load sessions:', error)
-      alert(`Failed to load sessions: ${error}`)
+      console.error('[App] Failed to load sessions:', error)
+      alert(`${t('app.errors.loadSessions')}: ${error}`)
     } finally {
+      console.log('[App] loadSessions completed, setLoading(false)')
       setLoading(false)
     }
   }
 
   const handleSearch = useCallback(async (query: string) => {
+    console.log('[Search] handleSearch called with query:', query)
+    console.log('[Search] sessions count:', sessions.length)
+
     if (!query.trim()) {
+      console.log('[Search] Empty query, clearing results')
       setSearchResults([])
       setSelectedSession(null)
       return
@@ -71,6 +104,8 @@ function App() {
 
     try {
       setIsSearching(true)
+      console.log('[Search] Set isSearching = true, invoking search_sessions...')
+
       const results = await invoke<SearchResult[]>('search_sessions', {
         sessions,
         query,
@@ -78,11 +113,18 @@ function App() {
         roleFilter: 'all',
         includeTools: false,
       })
+
+      console.log('[Search] Search completed, results:', results)
+      console.log('[Search] Results count:', results.length)
       setSearchResults(results)
+      console.log('[Search] Set searchResults')
     } catch (error) {
-      console.error('Search failed:', error)
+      console.error('[Search] Search failed:', error)
+      console.error('[Search] Error details:', JSON.stringify(error))
     } finally {
+      console.log('[Search] Finally block, setting isSearching = false')
       setIsSearching(false)
+      console.log('[Search] isSearching set to false')
     }
   }, [sessions])
 
@@ -92,7 +134,7 @@ function App() {
   }
 
   const handleDeleteSession = async (session: SessionInfo) => {
-    if (!confirm(`Delete session "${session.name || 'Untitled'}"?`)) {
+    if (!confirm(t('app.confirm.deleteSession', { name: session.name || t('common.untitled') }))) {
       return
     }
 
@@ -104,7 +146,7 @@ function App() {
       }
     } catch (error) {
       console.error('Failed to delete session:', error)
-      alert('Failed to delete session')
+      alert(t('app.errors.deleteSession'))
     }
   }
 
@@ -125,7 +167,7 @@ function App() {
       setShowRenameDialog(false)
     } catch (error) {
       console.error('Failed to rename session:', error)
-      alert('Failed to rename session')
+      alert(t('app.errors.renameSession'))
     }
   }
 
@@ -149,93 +191,106 @@ function App() {
         format,
         outputPath: filePath
       })
-      alert('Export successful!')
+      alert(t('app.errors.exportSuccess'))
     } catch (error) {
       console.error('Export failed:', error)
-      alert('Export failed')
+      alert(t('app.errors.exportFailed'))
     }
   }
+
+  console.log('[App] Render - isSearching:', isSearching, 'searchResults:', searchResults.length, 'sessions:', sessions.length)
 
   return (
     <div className="flex h-screen bg-background text-foreground">
       {/* Left Sidebar */}
-      <div className="w-96 border-r border-[#2c2d3b] flex flex-col">
+      <div className="w-80 border-r border-[#2c2d3b] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-[#2c2d3b]">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center justify-between px-3 py-2.5 border-b border-[#2c2d3b]">
+          <div className="flex items-center gap-2 min-w-0">
             {selectedProject && (
               <button
                 onClick={() => setSelectedProject(null)}
-                className="text-blue-400 hover:text-blue-300 text-sm flex items-center gap-1"
+                className="text-blue-400 hover:text-blue-300 text-sm flex items-center gap-1 flex-shrink-0"
               >
                 ← {t('common.back')}
               </button>
             )}
-            <h1 className="font-semibold">{selectedProject || t('app.projects')}</h1>
+            <h1 className="font-semibold text-sm truncate">{selectedProject || t('app.projects')}</h1>
           </div>
-          <div className="flex items-center gap-1">
-            {/* List View */}
-            <button
-              onClick={() => {
-                setViewMode('list')
-                setSelectedProject(null)
-              }}
-              className={`p-1.5 rounded transition-colors ${
-                viewMode === 'list'
-                  ? 'text-blue-400 bg-blue-400/10'
-                  : 'text-[#6a6f85] hover:text-white hover:bg-[#2c2d3b]'
-              }`}
-              title={t('app.viewMode.list')}
-            >
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-              </svg>
-            </button>
-            {/* Directory View */}
-            <button
-              onClick={() => {
-                setViewMode('directory')
-                setSelectedProject(null)
-              }}
-              className={`p-1.5 rounded transition-colors ${
-                viewMode === 'directory'
-                  ? 'text-blue-400 bg-blue-400/10'
-                  : 'text-[#6a6f85] hover:text-white hover:bg-[#2c2d3b]'
-              }`}
-              title={t('app.viewMode.directory')}
-            >
-              <FolderOpen className="h-4 w-4" />
-            </button>
-            {/* Project View */}
-            <button
-              onClick={() => {
-                setViewMode('project')
-                setSelectedProject(null)
-              }}
-              className={`p-1.5 rounded transition-colors ${
-                viewMode === 'project'
-                  ? 'text-blue-400 bg-blue-400/10'
-                  : 'text-[#6a6f85] hover:text-white hover:bg-[#2c2d3b]'
-              }`}
-              title={t('app.viewMode.project')}
-            >
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
-              </svg>
-            </button>
+          <div className="flex items-center gap-0.5 flex-shrink-0">
+            {/* View Mode Group */}
+            <div className="flex items-center bg-[#252636] rounded-lg p-0.5 mr-1">
+              {/* List View */}
+              <button
+                onClick={() => {
+                  setViewMode('list')
+                  setSelectedProject(null)
+                }}
+                className={`p-1 rounded transition-colors ${
+                  viewMode === 'list'
+                    ? 'text-blue-400 bg-[#2c2d3b]'
+                    : 'text-[#6a6f85] hover:text-white'
+                }`}
+                title={t('app.viewMode.list')}
+              >
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+                </svg>
+              </button>
+              {/* Directory View */}
+              <button
+                onClick={() => {
+                  setViewMode('directory')
+                  setSelectedProject(null)
+                }}
+                className={`p-1 rounded transition-colors ${
+                  viewMode === 'directory'
+                    ? 'text-blue-400 bg-[#2c2d3b]'
+                    : 'text-[#6a6f85] hover:text-white'
+                }`}
+                title={t('app.viewMode.directory')}
+              >
+                <FolderOpen className="h-3.5 w-3.5" />
+              </button>
+              {/* Project View */}
+              <button
+                onClick={() => {
+                  setViewMode('project')
+                  setSelectedProject(null)
+                }}
+                className={`p-1 rounded transition-colors ${
+                  viewMode === 'project'
+                    ? 'text-blue-400 bg-[#2c2d3b]'
+                    : 'text-[#6a6f85] hover:text-white'
+                }`}
+                title={t('app.viewMode.project')}
+              >
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+                </svg>
+              </button>
+            </div>
             {/* Language Switcher */}
             <LanguageSwitcher />
             {/* Dashboard Button */}
             <button
               onClick={() => setSelectedSession(null)}
-              className={`p-1.5 rounded transition-colors ${
+              className={`p-1 rounded transition-colors ml-0.5 ${
                 !selectedSession
                   ? 'text-[#569cd6] bg-[#569cd6]/10'
                   : 'text-[#6a6f85] hover:text-white hover:bg-[#2c2d3b]'
               }`}
-              title="Dashboard"
+              title={t('dashboard.title')}
             >
-              <BarChart3 className="h-4 w-4" />
+              <BarChart3 className="h-3.5 w-3.5" />
+            </button>
+            {/* Settings Button */}
+            <button
+              onClick={() => setShowSettings(true)}
+              className="p-1 rounded transition-colors ml-0.5 text-[#6a6f85] hover:text-white hover:bg-[#2c2d3b]"
+              title={t('settings.title')}
+            >
+              <Settings className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
@@ -247,25 +302,17 @@ function App() {
         />
         <div className="flex-1 overflow-y-auto">
           {viewMode === 'project' ? (
-            selectedProject ? (
-              <SessionList
-                sessions={sessions.filter(s => s.cwd === selectedProject)}
-                selectedSession={selectedSession}
-                onSelectSession={handleSelectSession}
-                onDeleteSession={handleDeleteSession}
-                loading={loading}
-              />
-            ) : (
-              <ProjectList
-                sessions={isSearching ? mapSearchResults(searchResults) : sessions}
-                selectedSession={selectedSession}
-                onSelectSession={handleSelectSession}
-                loading={loading}
-              />
-            )
+            <ProjectList
+              sessions={isSearching ? mapSearchResults(searchResults, sessions) : sessions}
+              selectedSession={selectedSession}
+              selectedProject={selectedProject}
+              onSelectSession={handleSelectSession}
+              onSelectProject={setSelectedProject}
+              loading={loading}
+            />
           ) : viewMode === 'directory' ? (
             <SessionListByDirectory
-              sessions={isSearching ? mapSearchResults(searchResults) : sessions}
+              sessions={isSearching ? mapSearchResults(searchResults, sessions) : sessions}
               selectedSession={selectedSession}
               onSelectSession={handleSelectSession}
               onDeleteSession={handleDeleteSession}
@@ -273,7 +320,7 @@ function App() {
             />
           ) : (
             <SessionList
-              sessions={isSearching ? mapSearchResults(searchResults) : sessions}
+              sessions={isSearching ? mapSearchResults(searchResults, sessions) : sessions}
               selectedSession={selectedSession}
               onSelectSession={handleSelectSession}
               onDeleteSession={handleDeleteSession}
@@ -285,17 +332,6 @@ function App() {
 
       {/* Main Content */}
       <div className="flex-1 overflow-hidden flex flex-col">
-        {selectedSession && (
-          <div className="flex items-center justify-between px-6 py-3 border-b border-[#2c2d3b] bg-[#1e1f2e]">
-            <button
-              onClick={() => setSelectedSession(null)}
-              className="flex items-center gap-2 px-3 py-1.5 text-sm text-[#6a6f85] hover:text-white hover:bg-[#2c2d3b] rounded-lg transition-colors"
-            >
-              <Home className="h-4 w-4" />
-              Back to Dashboard
-            </button>
-          </div>
-        )}
         <div className="flex-1 overflow-hidden">
           {selectedSession ? (
             <SessionViewer
@@ -305,7 +341,14 @@ function App() {
               onBack={() => setSelectedSession(null)}
             />
           ) : (
-            <Dashboard sessions={sessions} />
+            <Dashboard 
+              sessions={selectedProject 
+                ? sessions.filter(s => s.cwd === selectedProject)
+                : sessions
+              } 
+              onSessionSelect={setSelectedSession}
+              projectName={selectedProject || undefined}
+            />
           )}
         </div>
       </div>
@@ -327,22 +370,50 @@ function App() {
           onClose={() => setShowRenameDialog(false)}
         />
       )}
+
+      {/* Settings Panel */}
+      <SettingsPanel
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+      />
+
+      {/* Command Palette */}
+      <CommandPalette context={commandContext} />
     </div>
   )
 }
 
-function mapSearchResults(results: SearchResult[]): SessionInfo[] {
-  return results.map((r) => ({
-    path: r.session_path,
-    id: r.session_id,
-    cwd: '',
-    name: r.session_name,
-    created: new Date().toISOString(),
-    modified: new Date().toISOString(),
-    message_count: r.matches.length,
-    first_message: r.first_message,
-    all_messages_text: '',
-  }))
+function mapSearchResults(results: SearchResult[], allSessions: SessionInfo[]): SessionInfo[] {
+  console.log('[mapSearchResults] Mapping', results.length, 'search results')
+  console.log('[mapSearchResults] allSessions count:', allSessions.length)
+
+  return results.map((r) => {
+    // Find the original session to preserve cwd and other metadata
+    const originalSession = allSessions.find(s => s.id === r.session_id)
+
+    const mapped = {
+      path: r.session_path,
+      id: r.session_id,
+      cwd: originalSession?.cwd || '',
+      name: r.session_name || originalSession?.name,
+      created: originalSession?.created || new Date().toISOString(),
+      modified: originalSession?.modified || new Date().toISOString(),
+      message_count: r.matches.length,
+      first_message: r.first_message,
+      all_messages_text: '',
+      last_message: originalSession?.last_message || '',
+      last_message_role: originalSession?.last_message_role || 'user',
+    }
+
+    console.log('[mapSearchResults] Mapped result:', {
+      id: r.session_id,
+      name: mapped.name,
+      cwd: mapped.cwd,
+      originalSessionFound: !!originalSession
+    })
+
+    return mapped
+  })
 }
 
 export default App

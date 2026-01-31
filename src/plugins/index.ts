@@ -1,0 +1,7 @@
+export * from './types'
+export * from './registry'
+export * from './base/BaseSearchPlugin'
+export * from './builtins'
+export { MessageSearchPlugin } from './message/MessageSearchPlugin'
+export { ProjectSearchPlugin } from './project/ProjectSearchPlugin'
+export { SessionSearchPlugin } from './session/SessionSearchPlugin'

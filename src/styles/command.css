@@ -1,0 +1,74 @@
+/* cmdk 自定义样式 */
+
+[cmdk-root] {
+  @apply w-full;
+}
+
+[cmdk-input] {
+  @apply flex-1 bg-transparent border-0 outline-none text-sm;
+  @apply text-foreground placeholder:text-muted-foreground;
+}
+
+[cmdk-list] {
+  @apply max-h-[50vh] overflow-y-auto p-2;
+}
+
+[cmdk-group] {
+  @apply mb-2;
+}
+
+[cmdk-group-heading] {
+  @apply px-3 py-1.5 text-xs font-semibold text-muted-foreground uppercase;
+}
+
+[cmdk-item] {
+  @apply px-3 py-2 rounded-md cursor-pointer;
+  @apply transition-colors duration-150;
+  @apply hover:bg-[#2a2b36];
+}
+
+[cmdk-item][data-selected="true"] {
+  @apply bg-[#2a2b36];
+}
+
+[cmdk-empty] {
+  @apply flex flex-col items-center justify-center py-12 text-center;
+}
+
+/* 动画 */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes zoomIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-in {
+  animation-fill-mode: both;
+}
+
+.fade-in {
+  animation: fadeIn 200ms ease-out;
+}
+
+.zoom-in-95 {
+  animation: zoomIn 200ms ease-out;
+}
+
+/* 高亮 */
+mark {
+  @apply bg-yellow-400/20 text-yellow-400 rounded px-0.5;
+}

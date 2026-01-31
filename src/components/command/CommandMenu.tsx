@@ -1,0 +1,188 @@
+import { Command } from 'cmdk'
+import { Search, Loader2 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import { useEffect, useRef, useState } from 'react'
+import type { SearchPluginResult, SearchContext } from '../../plugins/types'
+import { useSearchPlugins } from '../../hooks/useSearchPlugins'
+import CommandItem from './CommandItem'
+import CommandEmpty from './CommandEmpty'
+import CommandLoading from './CommandLoading'
+import CommandHints from './CommandHints'
+import CommandError from './CommandError'
+
+interface CommandMenuProps {
+  query: string
+  setQuery: (query: string) => void
+  results: SearchPluginResult[]
+  setResults: (results: SearchPluginResult[]) => void
+  isSearching: boolean
+  setIsSearching: (isSearching: boolean) => void
+  context: SearchContext
+  onClose: () => void
+}
+
+export default function CommandMenu({
+  query,
+  setQuery,
+  results,
+  setResults,
+  isSearching,
+  setIsSearching,
+  context,
+  onClose
+}: CommandMenuProps) {
+  const { t } = useTranslation()
+  const { registry, search } = useSearchPlugins(context)
+  const debounceRef = useRef<NodeJS.Timeout>()
+  const abortControllerRef = useRef<AbortController>()
+  const [searchError, setSearchError] = useState<string | undefined>()
+  
+  // 防抖搜索
+  useEffect(() => {
+    // 取消之前的搜索
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      console.log('[CommandMenu] Aborted previous search')
+    }
+    
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current)
+    }
+    
+    if (!query.trim()) {
+      setResults([])
+      setIsSearching(false)
+      setSearchError(undefined)
+      return
+    }
+    
+    console.log('[CommandMenu] Starting debounced search for:', query)
+    setIsSearching(true)
+    setSearchError(undefined)
+    
+    debounceRef.current = setTimeout(async () => {
+      try {
+        console.log('[CommandMenu] Executing search after debounce')
+        abortControllerRef.current = new AbortController()
+        
+        // 添加超时保护
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            console.error('[CommandMenu] Search timeout!')
+            reject(new Error('Search timeout after 15 seconds'))
+          }, 15000) // 15秒总超时
+        })
+        
+        const searchPromise = search(query)
+        const searchResults = await Promise.race([searchPromise, timeoutPromise])
+        
+        console.log('[CommandMenu] Search completed, results:', searchResults.length)
+        
+        if (!abortControllerRef.current.signal.aborted) {
+          setResults(searchResults)
+          setIsSearching(false)
+        }
+      } catch (error) {
+        console.error('[CommandMenu] Search error:', error)
+        if (error instanceof Error && error.name !== 'AbortError') {
+          console.error('[CommandMenu] Search failed:', error.message)
+          setSearchError(error.message)
+          // 显示错误状态
+          setResults([])
+        }
+        setIsSearching(false)
+      }
+    }, 300)
+    
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current)
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, search]) // 只依赖 query 和 search
+  
+  // 清理
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+    }
+  }, [])
+  
+  // 按插件分组结果
+  const groupedResults = results.reduce((acc, result) => {
+    if (!acc[result.pluginId]) {
+      acc[result.pluginId] = []
+    }
+    acc[result.pluginId].push(result)
+    return acc
+  }, {} as Record<string, SearchPluginResult[]>)
+  
+  return (
+    <Command
+      className="w-full"
+      shouldFilter={false} // 我们自己处理过滤
+    >
+      {/* 搜索框 */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-[#2a2b36]">
+        <Search className="w-5 h-5 text-muted-foreground" />
+        <Command.Input
+          value={query}
+          onValueChange={setQuery}
+          placeholder={t('command.placeholder', '搜索会话、项目、消息...')}
+          className="flex-1 bg-transparent border-0 outline-none text-sm text-foreground placeholder:text-muted-foreground"
+        />
+        {isSearching && (
+          <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />
+        )}
+        <kbd className="px-2 py-1 text-xs text-muted-foreground bg-[#252636] rounded">
+          ESC
+        </kbd>
+      </div>
+      
+      {/* 结果列表 */}
+      <Command.List className="max-h-[50vh] overflow-y-auto p-2">
+        {isSearching && <CommandLoading />}
+        
+        {!isSearching && searchError && (
+          <CommandError error={searchError} />
+        )}
+        
+        {!isSearching && !searchError && results.length === 0 && query && (
+          <CommandEmpty query={query} />
+        )}
+        
+        {!isSearching && !searchError && !query && (
+          <CommandHints />
+        )}
+        
+        {!isSearching && !searchError && Object.entries(groupedResults).map(([pluginId, pluginResults]) => {
+          const plugin = registry.get(pluginId)
+          if (!plugin) return null
+          
+          return (
+            <Command.Group
+              key={pluginId}
+              heading={plugin.name}
+              className="mb-2"
+            >
+              {pluginResults.map(result => (
+                <CommandItem
+                  key={result.id}
+                  result={result}
+                  plugin={plugin}
+                  onSelect={() => {
+                    plugin.onSelect(result, context)
+                    onClose()
+                  }}
+                />
+              ))}
+            </Command.Group>
+          )
+        })}
+      </Command.List>
+    </Command>
+  )
+}
