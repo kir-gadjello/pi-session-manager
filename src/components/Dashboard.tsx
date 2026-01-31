@@ -27,7 +27,6 @@ function getProjectName(path: string): string {
 export default function Dashboard({ sessions, onSessionSelect, projectName }: DashboardProps) {
   const { t } = useTranslation()
   const [stats, setStats] = useState<SessionStats | null>(null)
-  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     loadStats()
@@ -35,33 +34,36 @@ export default function Dashboard({ sessions, onSessionSelect, projectName }: Da
 
   const loadStats = async () => {
     try {
-      setLoading(true)
       const result = await invoke<SessionStats>('get_session_stats', { sessions })
       setStats(result)
     } catch (error) {
       console.error('Failed to load stats:', error)
-    } finally {
-      setLoading(false)
     }
   }
 
-  if (loading) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-12 h-12 border-4 border-[#569cd6] border-t-transparent rounded-full animate-spin" />
-          <div className="text-[#6a6f85]">{t('dashboard.loading')}</div>
-        </div>
-      </div>
-    )
-  }
-
-  if (!stats) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-[#6a6f85]">{t('dashboard.noData')}</div>
-      </div>
-    )
+  // 不显示加载状态，直接显示空数据或实际数据
+  const displayStats: SessionStats = stats || {
+    total_sessions: 0,
+    total_messages: 0,
+    user_messages: 0,
+    assistant_messages: 0,
+    total_tokens: 0,
+    sessions_by_project: {},
+    sessions_by_model: {},
+    messages_by_date: {},
+    messages_by_hour: {},
+    messages_by_day_of_week: {},
+    average_messages_per_session: 0,
+    heatmap_data: [],
+    time_distribution: [],
+    token_details: {
+      total_input: 0,
+      total_output: 0,
+      total_cache_read: 0,
+      total_cache_write: 0,
+      total_cost: 0,
+      tokens_by_model: {},
+    },
   }
 
   return (
@@ -95,41 +97,41 @@ export default function Dashboard({ sessions, onSessionSelect, projectName }: Da
       <div className="grid grid-cols-5 gap-3 mb-4">
         <StatCard
           icon={BarChart3}
-          label={t('stats.cards.sessions')}
-          value={stats.total_sessions}
+          label={t('displayStats.cards.sessions')}
+          value={displayStats.total_sessions}
           color="#569cd6"
         />
         <StatCard
           icon={Activity}
-          label={t('stats.cards.messages')}
-          value={stats.total_messages}
+          label={t('displayStats.cards.messages')}
+          value={displayStats.total_messages}
           color="#7ee787"
         />
         <StatCard
           icon={Clock}
-          label={t('stats.cards.avgPerSession')}
-          value={stats.average_messages_per_session.toFixed(1)}
+          label={t('displayStats.cards.avgPerSession')}
+          value={displayStats.average_messages_per_session.toFixed(1)}
           color="#ffa657"
         />
         <StatCard
           icon={Zap}
           label="Total Tokens"
-          value={stats.total_tokens > 1000000 
-            ? `${(stats.total_tokens / 1000000).toFixed(1)}M` 
-            : stats.total_tokens > 1000 
-              ? `${(stats.total_tokens / 1000).toFixed(1)}k`
-              : stats.total_tokens
+          value={displayStats.total_tokens > 1000000 
+            ? `${(displayStats.total_tokens / 1000000).toFixed(1)}M` 
+            : displayStats.total_tokens > 1000 
+              ? `${(displayStats.total_tokens / 1000).toFixed(1)}k`
+              : displayStats.total_tokens
           }
           color="#c792ea"
         />
         <StatCard
           icon={DollarSign}
           label="Total Cost"
-          value={stats.token_details.total_cost < 0.01 
-            ? `$${stats.token_details.total_cost.toFixed(4)}` 
-            : stats.token_details.total_cost < 1
-              ? `$${stats.token_details.total_cost.toFixed(3)}`
-              : `$${stats.token_details.total_cost.toFixed(2)}`
+          value={displayStats.token_details.total_cost < 0.01 
+            ? `$${displayStats.token_details.total_cost.toFixed(4)}` 
+            : displayStats.token_details.total_cost < 1
+              ? `$${displayStats.token_details.total_cost.toFixed(3)}`
+              : `$${displayStats.token_details.total_cost.toFixed(2)}`
           }
           color="#ff6b6b"
         />
@@ -140,12 +142,12 @@ export default function Dashboard({ sessions, onSessionSelect, projectName }: Da
         {/* Left Column - 8 cols */}
         <div className="col-span-8 space-y-3">
           {/* Token Trend Chart - Full Width */}
-          <TokenTrendChart stats={stats} days={30} />
+          <TokenTrendChart stats={displayStats} days={30} />
 
           {/* Message Distribution + Heatmap */}
           <div className="grid grid-cols-2 gap-3">
-            <MessageDistribution stats={stats} />
-            <ActivityHeatmap data={stats.heatmap_data} size="mini" showLabels={false} />
+            <MessageDistribution stats={displayStats} />
+            <ActivityHeatmap data={displayStats.heatmap_data} size="mini" showLabels={false} />
           </div>
 
           {/* Recent Sessions */}
@@ -155,13 +157,13 @@ export default function Dashboard({ sessions, onSessionSelect, projectName }: Da
         {/* Right Column - 4 cols */}
         <div className="col-span-4 space-y-3">
           {/* Top Models */}
-          <TopModelsChart stats={stats} limit={5} />
+          <TopModelsChart stats={displayStats} limit={5} />
 
           {/* Projects */}
-          <ProjectsChart stats={stats} limit={5} />
+          <ProjectsChart stats={displayStats} limit={5} />
 
           {/* Time Distribution */}
-          <TimeDistribution stats={stats} type="hourly" />
+          <TimeDistribution stats={displayStats} type="hourly" />
         </div>
       </div>
     </div>
