@@ -161,14 +161,13 @@ pub async fn open_session_in_terminal(
 
     let result = match terminal.as_str() {
         "iterm2" => {
-            // iTerm2 AppleScript 命令
+            // iTerm2 AppleScript 命令 - 使用 && 连接命令
             let script = format!(
                 r#"tell application "iTerm"
     activate
     set newWindow to (create window with default profile)
     tell current session of newWindow
-        write text "cd \"{}\""
-        write text "{} --session \"{}\""
+        write text "cd \"{}\" && {} --session \"{}\""
     end tell
 end tell"#,
                 cwd_escaped,
