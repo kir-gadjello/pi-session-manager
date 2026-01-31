@@ -3,6 +3,7 @@ import type { SessionInfo } from '../types'
 import { MessageSquare, FileText, Trash2, Loader2, Search, FolderOpen, Clock, User, Bot } from 'lucide-react'
 import OpenInBrowserButton from './OpenInBrowserButton'
 import OpenInTerminalButton from './OpenInTerminalButton'
+import { SessionBadge } from './SessionBadge'
 
 interface SessionListProps {
   sessions: SessionInfo[]
@@ -11,6 +12,10 @@ interface SessionListProps {
   onDeleteSession?: (session: SessionInfo) => void
   loading: boolean
   searchQuery?: string
+  getBadgeType?: (sessionId: string) => 'new' | 'updated' | null
+  terminal?: 'iterm2' | 'terminal' | 'vscode' | 'custom'
+  piPath?: string
+  customCommand?: string
 }
 
 export default function SessionList({
@@ -19,6 +24,11 @@ export default function SessionList({
   onSelectSession,
   onDeleteSession,
   loading,
+  searchQuery,
+  getBadgeType,
+  terminal = 'iterm2',
+  piPath,
+  customCommand,
 }: SessionListProps) {
   const { t } = useTranslation()
 
@@ -67,13 +77,22 @@ export default function SessionList({
             <div className="flex-1 min-w-0 space-y-2">
               {/* 标题行 */}
               <div className="flex items-start justify-between gap-2">
-                <h3 className="font-semibold text-sm leading-tight line-clamp-2">
-                  {session.name || session.first_message || t('session.list.untitled')}
-                </h3>
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  <h3 className="font-semibold text-sm leading-tight line-clamp-2 flex-1">
+                    {session.name || session.first_message || t('session.list.untitled')}
+                  </h3>
+                  {/* Badge */}
+                  {getBadgeType && getBadgeType(session.id) && (
+                    <SessionBadge type={getBadgeType(session.id)!} />
+                  )}
+                </div>
                 <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
                   {/* 在终端中打开按钮 */}
                   <OpenInTerminalButton
                     session={session}
+                    terminal={terminal}
+                    piPath={piPath}
+                    customCommand={customCommand}
                     size="sm"
                     variant="ghost"
                     onError={(error) => console.error('Failed to open in terminal:', error)}

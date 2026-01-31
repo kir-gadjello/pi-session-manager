@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod config;
-mod export;
+pub mod export;
+pub mod file_watcher;
 pub mod models;
 pub mod scanner;
 pub mod scanner_scheduler;
@@ -35,7 +36,9 @@ pub fn run() {
             save_pi_settings,
             list_models,
             test_model,
-            test_models_batch
+            test_models_batch,
+            load_app_settings,
+            save_app_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { SessionInfo } from '../types'
 import { MessageSquare, Calendar, FileText, Trash2, FolderOpen, ChevronDown, ChevronRight, Loader2, Search } from 'lucide-react'
+import OpenInTerminalButton from './OpenInTerminalButton'
+import { SessionBadge } from './SessionBadge'
 
 interface SessionListByDirectoryProps {
   sessions: SessionInfo[]
@@ -9,6 +11,10 @@ interface SessionListByDirectoryProps {
   onSelectSession: (session: SessionInfo) => void
   onDeleteSession?: (session: SessionInfo) => void
   loading: boolean
+  terminal?: 'iterm2' | 'terminal' | 'vscode' | 'custom'
+  piPath?: string
+  customCommand?: string
+  getBadgeType?: (sessionId: string) => 'new' | 'updated' | null
 }
 
 export default function SessionListByDirectory({
@@ -17,6 +23,10 @@ export default function SessionListByDirectory({
   onSelectSession,
   onDeleteSession,
   loading,
+  terminal = 'iterm2',
+  piPath,
+  customCommand,
+  getBadgeType,
 }: SessionListByDirectoryProps) {
   const { t } = useTranslation()
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set())
@@ -108,9 +118,15 @@ export default function SessionListByDirectory({
                     <div className="flex items-start gap-2.5">
                       <MessageSquare className="h-4 w-4 text-muted-foreground mt-0.5 flex-shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <h3 className="font-medium text-sm truncate leading-tight">
-                          {session.name || session.first_message || t('session.list.untitled')}
-                        </h3>
+                        <div className="flex items-center gap-2">
+                          <h3 className="font-medium text-sm truncate leading-tight flex-1">
+                            {session.name || session.first_message || t('session.list.untitled')}
+                          </h3>
+                          {/* Badge */}
+                          {getBadgeType && getBadgeType(session.id) && (
+                            <SessionBadge type={getBadgeType(session.id)!} />
+                          )}
+                        </div>
                         <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground">
                           <span className="flex items-center gap-1">
                             <Calendar className="h-3 w-3" />
@@ -123,18 +139,29 @@ export default function SessionListByDirectory({
                           </span>
                         </div>
                       </div>
-                      {onDeleteSession && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onDeleteSession(session)
-                          }}
-                          className="opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-red-400 hover:bg-red-400/10 rounded transition-all flex-shrink-0"
-                          title={t('common.deleteSession')}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      )}
+                      <div className="flex items-center gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <OpenInTerminalButton
+                          session={session}
+                          terminal={terminal}
+                          piPath={piPath}
+                          customCommand={customCommand}
+                          size="sm"
+                          variant="ghost"
+                          onError={(error) => console.error('Failed to open in terminal:', error)}
+                        />
+                        {onDeleteSession && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              onDeleteSession(session)
+                            }}
+                            className="p-1 text-muted-foreground hover:text-red-400 hover:bg-red-400/10 rounded transition-all"
+                            title={t('common.deleteSession')}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 ))}

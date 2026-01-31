@@ -146,6 +146,7 @@ pub async fn get_session_stats(sessions: Vec<SessionInfo>) -> Result<stats::Sess
 #[tauri::command]
 pub async fn open_session_in_terminal(
     path: String,
+    cwd: String,
     terminal: Option<String>,
     pi_path: Option<String>,
 ) -> Result<(), String> {
@@ -153,6 +154,10 @@ pub async fn open_session_in_terminal(
 
     let terminal = terminal.unwrap_or_else(|| "iterm2".to_string());
     let pi_cmd = pi_path.unwrap_or_else(|| "pi".to_string());
+
+    // 转义路径中的特殊字符
+    let cwd_escaped = cwd.replace("\"", "\\\\\"").replace("\\", "\\\\");
+    let path_escaped = path.replace("\"", "\\\\\"");
 
     let result = match terminal.as_str() {
         "iterm2" => {
@@ -162,11 +167,13 @@ pub async fn open_session_in_terminal(
     activate
     set newWindow to (create window with default profile)
     tell current session of newWindow
-        write text "{} --session {}"
+        write text "cd \"{}\""
+        write text "{} --session \"{}\""
     end tell
 end tell"#,
+                cwd_escaped,
                 pi_cmd,
-                path.replace("\"", "\\\"")
+                path_escaped
             );
             Command::new("osascript").arg("-e").arg(script).spawn()
         }
@@ -175,17 +182,20 @@ end tell"#,
             let script = format!(
                 r#"tell application "Terminal"
     activate
-    do script "{} --session {}"
+    do script "cd \"{}\" && {} --session \"{}\""
 end tell"#,
+                cwd_escaped,
                 pi_cmd,
-                path.replace("\"", "\\\"")
+                path_escaped
             );
             Command::new("osascript").arg("-e").arg(script).spawn()
         }
         "vscode" => {
             // VS Code 终端
+            // 注意：VS Code 的终端自动化比较复杂，这里简化处理
+            // 只打开 VS Code 到指定目录，用户需要手动在终端中执行 pi --session 命令
             Command::new("code")
-                .args(["--new-window", "--exec", &format!("{} --session {}", pi_cmd, path)])
+                .args(["--new-window", &cwd])
                 .spawn()
         }
         _ => {
@@ -634,10 +644,10 @@ pub async fn search_sessions_fts(
 ) -> Result<Vec<SessionInfo>, String> {
     let config = config::load_config()?;
     let conn = sqlite_cache::init_db_with_config(&config)?;
-    
+
     // 使用 FTS5 搜索获取路径
     let paths = sqlite_cache::search_fts5(&conn, &query, limit)?;
-    
+
     // 从数据库获取完整的 SessionInfo
     let mut sessions = Vec::new();
     for path in paths {
@@ -645,6 +655,155 @@ pub async fn search_sessions_fts(
             sessions.push(session);
         }
     }
-    
+
     Ok(sessions)
+}
+
+/// 应用设置类型
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct AppSettings {
+    pub terminal: TerminalSettings,
+    pub appearance: AppearanceSettings,
+    pub language: LanguageSettings,
+    pub session: SessionSettings,
+    pub search: SearchSettings,
+    pub export: ExportSettings,
+    pub advanced: AdvancedSettings,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct TerminalSettings {
+    pub default_terminal: String,
+    pub custom_terminal_command: Option<String>,
+    pub pi_command_path: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct AppearanceSettings {
+    pub theme: String,
+    pub sidebar_width: u32,
+    pub font_size: String,
+    pub code_block_theme: String,
+    pub message_spacing: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct LanguageSettings {
+    pub locale: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct SessionSettings {
+    pub auto_refresh: bool,
+    pub refresh_interval: u32,
+    pub default_view_mode: String,
+    pub show_message_preview: bool,
+    pub preview_lines: u32,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct SearchSettings {
+    pub default_search_mode: String,
+    pub case_sensitive: bool,
+    pub include_tool_calls: bool,
+    pub highlight_matches: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct ExportSettings {
+    pub default_format: String,
+    pub include_metadata: bool,
+    pub include_timestamps: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct AdvancedSettings {
+    pub session_dir: String,
+    pub cache_enabled: bool,
+    pub debug_mode: bool,
+    pub max_cache_size: u32,
+}
+
+/// 获取应用设置文件路径
+fn get_app_settings_path() -> Result<std::path::PathBuf, String> {
+    let config_dir = dirs::config_dir()
+        .ok_or("Failed to get config directory")?;
+    Ok(config_dir.join("pi-session-manager").join("settings.json"))
+}
+
+/// 加载应用设置
+#[tauri::command]
+pub async fn load_app_settings() -> Result<AppSettings, String> {
+    let settings_path = get_app_settings_path()?;
+
+    if !settings_path.exists() {
+        // 返回默认设置
+        return Ok(AppSettings {
+            terminal: TerminalSettings {
+                default_terminal: "iterm2".to_string(),
+                custom_terminal_command: None,
+                pi_command_path: "pi".to_string(),
+            },
+            appearance: AppearanceSettings {
+                theme: "dark".to_string(),
+                sidebar_width: 320,
+                font_size: "medium".to_string(),
+                code_block_theme: "github".to_string(),
+                message_spacing: "comfortable".to_string(),
+            },
+            language: LanguageSettings {
+                locale: "zh-CN".to_string(),
+            },
+            session: SessionSettings {
+                auto_refresh: true,
+                refresh_interval: 30,
+                default_view_mode: "project".to_string(),
+                show_message_preview: true,
+                preview_lines: 2,
+            },
+            search: SearchSettings {
+                default_search_mode: "content".to_string(),
+                case_sensitive: false,
+                include_tool_calls: false,
+                highlight_matches: true,
+            },
+            export: ExportSettings {
+                default_format: "html".to_string(),
+                include_metadata: true,
+                include_timestamps: true,
+            },
+            advanced: AdvancedSettings {
+                session_dir: "~/.pi/agent/sessions".to_string(),
+                cache_enabled: true,
+                debug_mode: false,
+                max_cache_size: 100,
+            },
+        });
+    }
+
+    let content = fs::read_to_string(&settings_path)
+        .map_err(|e| format!("Failed to read settings: {}", e))?;
+
+    serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse settings: {}", e))
+}
+
+/// 保存应用设置
+#[tauri::command]
+pub async fn save_app_settings(settings: AppSettings) -> Result<(), String> {
+    let settings_path = get_app_settings_path()?;
+
+    // 确保目录存在
+    if let Some(parent) = settings_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create settings directory: {}", e))?;
+    }
+
+    let content = serde_json::to_string_pretty(&settings)
+        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
+
+    fs::write(&settings_path, content)
+        .map_err(|e| format!("Failed to write settings: {}", e))?;
+
+    Ok(())
 }
