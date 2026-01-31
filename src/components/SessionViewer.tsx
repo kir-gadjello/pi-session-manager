@@ -356,13 +356,16 @@ export default function SessionViewer({ session, onExport, onRename }: SessionVi
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={onRename}
-              className="px-3 py-1 text-xs bg-[#2c2d3b] hover:bg-[#3c3d4b] rounded transition-colors"
+              className="px-3 py-1 text-xs bg-[#2c2d3b] hover:bg-[#3c3d4b] rounded transition-colors cursor-pointer"
             >
               {t('common.rename')}
             </button>
             <button
-              onClick={onExport}
-              className="px-3 py-1 text-xs bg-[#2c2d3b] hover:bg-[#3c3d4b] rounded transition-colors"
+              onClick={() => {
+                console.log('[SessionViewer] Export button clicked')
+                onExport()
+              }}
+              className="px-3 py-1 text-xs bg-[#2c2d3b] hover:bg-[#3c3d4b] rounded transition-colors cursor-pointer"
             >
               {t('common.export')}
             </button>

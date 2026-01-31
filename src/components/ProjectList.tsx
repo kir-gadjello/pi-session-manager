@@ -3,6 +3,8 @@ import { FolderOpen, Loader2, ArrowLeft } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatDistanceToNow } from 'date-fns'
+import OpenInTerminalButton from './OpenInTerminalButton'
+import { SessionBadge } from './SessionBadge'
 
 interface ProjectListProps {
   sessions: SessionInfo[]
@@ -11,6 +13,10 @@ interface ProjectListProps {
   onSelectSession: (session: SessionInfo) => void
   onSelectProject?: (project: string | null) => void
   loading: boolean
+  terminal?: 'iterm2' | 'terminal' | 'vscode' | 'custom'
+  piPath?: string
+  customCommand?: string
+  getBadgeType?: (sessionId: string) => 'new' | 'updated' | null
 }
 
 interface Project {
@@ -28,6 +34,10 @@ export default function ProjectList({
   onSelectSession,
   onSelectProject,
   loading,
+  terminal = 'iterm2',
+  piPath,
+  customCommand,
+  getBadgeType,
 }: ProjectListProps) {
   const { t } = useTranslation()
   // Use external selectedProject if provided, otherwise use internal state
@@ -139,13 +149,32 @@ export default function ProjectList({
               selectedSession?.id === session.id ? 'bg-accent' : ''
             }`}
           >
-            <div className="text-sm truncate leading-tight">
-              {session.name || session.first_message || t('session.list.untitled')}
-            </div>
-            <div className="flex items-center gap-2 mt-0.5 text-[11px] text-muted-foreground">
-              <span>{formatShortTime(session.modified)}</span>
-              <span className="text-border">·</span>
-              <span>{session.message_count}</span>
+            <div className="flex items-center gap-2.5">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <div className="text-sm truncate leading-tight flex-1">
+                    {session.name || session.first_message || t('session.list.untitled')}
+                  </div>
+                  {/* Badge */}
+                  {getBadgeType && getBadgeType(session.id) && (
+                    <SessionBadge type={getBadgeType(session.id)!} />
+                  )}
+                </div>
+                <div className="flex items-center gap-2 mt-0.5 text-[11px] text-muted-foreground">
+                  <span>{formatShortTime(session.modified)}</span>
+                  <span className="text-border">·</span>
+                  <span>{session.message_count}</span>
+                </div>
+              </div>
+              <OpenInTerminalButton
+                session={session}
+                terminal={terminal}
+                piPath={piPath}
+                customCommand={customCommand}
+                size="sm"
+                variant="ghost"
+                onError={(error) => console.error('Failed to open in terminal:', error)}
+              />
             </div>
           </div>
         ))}
