@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
-import { ArrowUp, ArrowDown } from 'lucide-react'
+import { ArrowUp, ArrowDown, Loader2 } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { SessionInfo, SessionEntry } from '../types'
 import { parseSessionEntries, computeStats } from '../utils/session'
@@ -41,6 +41,7 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
   const { toggleThinking, toggleToolsExpanded } = useSessionView()
   const [entries, setEntries] = useState<SessionEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [showLoading, setShowLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showSidebar, setShowSidebar] = useState(false)
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null)
@@ -70,6 +71,11 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
   const resizeHandleRef = useRef<HTMLDivElement>(null)
   const isAtBottomRef = useRef(true)
 
+  const measuredHeightsRef = useRef<Map<number, number>>(new Map())
+  const isScrollingRef = useRef(false)
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const loadingTimerRef = useRef<NodeJS.Timeout | null>(null)
+
   useEffect(() => {
     lastModifiedTimeRef.current = 0
     setLineCount(0)
@@ -79,13 +85,26 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
     loadSession()
   }, [session.path])
 
-  // 监听会话文件变化，增量更新
   useEffect(() => {
     if (!session.path || loading) return
 
+    const container = messagesContainerRef.current
+    if (!container) return
+
     let checkInterval: NodeJS.Timeout
 
+    const handleScroll = () => {
+      isScrollingRef.current = true
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current)
+      }
+      scrollTimeoutRef.current = setTimeout(() => {
+        isScrollingRef.current = false
+      }, 150)
+    }
+
     const checkFileChanges = async () => {
+      if (isScrollingRef.current) return
       try {
         await loadIncremental()
       } catch (err) {
@@ -93,11 +112,15 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
       }
     }
 
-    // 每 1 秒检查一次文件变化
+    container.addEventListener('scroll', handleScroll, { passive: true })
     checkInterval = setInterval(checkFileChanges, 1000)
 
     return () => {
       clearInterval(checkInterval)
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current)
+      }
+      container.removeEventListener('scroll', handleScroll)
     }
   }, [session.path, lineCount, loading])
 
@@ -204,29 +227,46 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
   }, [renderableEntries])
 
   const estimateEntrySize = useCallback((index: number) => {
+    const cachedHeight = measuredHeightsRef.current.get(index)
+    if (cachedHeight) return cachedHeight
+
     const entry = renderableEntries[index]
     if (!entry) return 140
+
     switch (entry.type) {
-      case 'message':
-        return 220
+      case 'message': {
+        const content = entry.message?.content || []
+        const textLength = content
+          .filter(c => c.type === 'text')
+          .reduce((sum, c) => sum + (c.text?.length || 0), 0)
+        const baseHeight = 100
+        const contentHeight = Math.ceil(textLength / 100) * 40
+        return Math.min(baseHeight + contentHeight, 800)
+      }
       case 'model_change':
         return 64
       case 'compaction':
-        return 140
+        return 180
       case 'branch_summary':
-        return 140
+        return 160
       case 'custom_message':
         return 120
       default:
         return 120
     }
-  }, [entries])
+  }, [renderableEntries])
 
   const rowVirtualizer = useVirtualizer({
     count: renderableEntries.length,
     getScrollElement: () => messagesContainerRef.current,
     estimateSize: estimateEntrySize,
-    overscan: 8
+    overscan: 15,
+    measureElement: (el) => {
+      const index = Number(el.getAttribute('data-index'))
+      const height = el.getBoundingClientRect().height
+      measuredHeightsRef.current.set(index, height)
+      return height
+    }
   })
 
   // 滚动到顶部
@@ -327,7 +367,14 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
   const loadSession = async () => {
     try {
       setLoading(true)
+      setShowLoading(false)
       setError(null)
+      measuredHeightsRef.current.clear()
+
+      // 300ms 后才显示加载动画，避免快速加载时的闪烁
+      loadingTimerRef.current = setTimeout(() => {
+        setShowLoading(true)
+      }, 300)
 
       const jsonlContent = await invoke<string>('read_session_file', { path: session.path })
 
@@ -346,7 +393,12 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
       console.error('Failed to load session:', err)
       setError(err instanceof Error ? err.message : t('session.loadError'))
     } finally {
+      if (loadingTimerRef.current) {
+        clearTimeout(loadingTimerRef.current)
+        loadingTimerRef.current = null
+      }
       setLoading(false)
+      setShowLoading(false)
     }
   }
 
@@ -599,9 +651,12 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
           </div>
         </div>
 
-        {loading ? (
+        {showLoading ? (
           <div className="flex-1 flex items-center justify-center">
-            <div className="animate-spin text-[#6a6f85]">{t('session.loading')}</div>
+            <div className="flex items-center gap-2 text-[#6a6f85]">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>{t('session.loading')}</span>
+            </div>
           </div>
         ) : error ? (
           <div className="flex-1 flex items-center justify-center text-red-400">

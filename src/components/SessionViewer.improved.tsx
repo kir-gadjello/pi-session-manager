@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
+import { Loader2 } from 'lucide-react'
 import type { SessionInfo, SessionEntry } from '../types'
 import { parseSessionEntries, computeStats } from '../utils/session'
 import SessionHeader from './SessionHeader'
@@ -29,6 +30,7 @@ export default function SessionViewer({ session, onExport, onRename }: SessionVi
   const { t } = useTranslation()
   const [entries, setEntries] = useState<SessionEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [showLoading, setShowLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showSidebar, setShowSidebar] = useState(false)
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null)
@@ -41,6 +43,7 @@ export default function SessionViewer({ session, onExport, onRename }: SessionVi
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const sidebarRef = useRef<HTMLDivElement>(null)
   const resizeHandleRef = useRef<HTMLDivElement>(null)
+  const loadingTimerRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
     loadSession()
@@ -102,7 +105,13 @@ export default function SessionViewer({ session, onExport, onRename }: SessionVi
   const loadSession = async () => {
     try {
       setLoading(true)
+      setShowLoading(false)
       setError(null)
+
+      // 300ms 后才显示加载动画，避免快速加载时的闪烁
+      loadingTimerRef.current = setTimeout(() => {
+        setShowLoading(true)
+      }, 300)
 
       const jsonlContent = await invoke<string>('read_session_file', { path: session.path })
 
@@ -117,7 +126,12 @@ export default function SessionViewer({ session, onExport, onRename }: SessionVi
       console.error('Failed to load session:', err)
       setError(err instanceof Error ? err.message : t('session.loadError'))
     } finally {
+      if (loadingTimerRef.current) {
+        clearTimeout(loadingTimerRef.current)
+        loadingTimerRef.current = null
+      }
       setLoading(false)
+      setShowLoading(false)
     }
   }
 
@@ -261,9 +275,12 @@ export default function SessionViewer({ session, onExport, onRename }: SessionVi
           </div>
         </div>
 
-        {loading ? (
+        {showLoading ? (
           <div className="flex-1 flex items-center justify-center">
-            <div className="animate-spin text-[#6a6f85]">{t('session.loading')}</div>
+            <div className="flex items-center gap-2 text-[#6a6f85]">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>{t('session.loading')}</span>
+            </div>
           </div>
         ) : error ? (
           <div className="flex-1 flex items-center justify-center text-red-400">
