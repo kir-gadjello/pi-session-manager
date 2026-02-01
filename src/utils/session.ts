@@ -1,5 +1,9 @@
 import type { SessionEntry, LegacySessionStats } from '../types'
 
+export function isTauriReady(): boolean {
+  return typeof window !== 'undefined' && window.__TAURI__ !== undefined
+}
+
 export function parseSessionEntries(jsonlContent: string): SessionEntry[] {
   const entries: SessionEntry[] = []
   const lines = jsonlContent.split('\n').filter(line => line.trim())

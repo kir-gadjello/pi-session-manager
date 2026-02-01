@@ -10,6 +10,15 @@ export interface SessionInfo {
   all_messages_text: string
   last_message: string
   last_message_role: string
+  isFavorite?: boolean
+}
+
+export interface FavoriteItem {
+  type: 'session' | 'project'
+  id: string
+  name: string
+  path: string
+  addedAt: string
 }
 
 export interface SessionStatsInput {
