@@ -11,6 +11,7 @@ import { settings } from './settings'
 import { components } from './components'
 import { command } from './command'
 import { role } from './role'
+import { favorites } from './favorites'
 
 export const zhCN = {
   common,
@@ -26,6 +27,7 @@ export const zhCN = {
   components,
   command,
   role,
+  favorites,
 } as const
 
 export type Translations = typeof zhCN
