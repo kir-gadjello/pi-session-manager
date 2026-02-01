@@ -1,14 +1,14 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { BarChart3, FolderOpen, Settings, ArrowLeft } from 'lucide-react'
+import { FolderOpen, Star, Settings, ArrowLeft } from 'lucide-react'
 import SessionList from './components/SessionList'
-import SessionListByDirectory from './components/SessionListByDirectory'
 import ProjectList from './components/ProjectList'
 import SessionViewer from './components/SessionViewer'
 import SearchPanel from './components/SearchPanel'
 import ExportDialog from './components/ExportDialog'
 import RenameDialog from './components/RenameDialog'
 import Dashboard from './components/Dashboard'
+import FavoritesPanel from './components/FavoritesPanel'
 import SettingsPanel from './components/settings/SettingsPanel'
 import { CommandPalette } from './components/command'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
@@ -19,8 +19,21 @@ import { useSearch } from './hooks/useSearch'
 import { useAppSettings } from './hooks/useAppSettings'
 import { useSessionActions } from './hooks/useSessionActions'
 import { registerBuiltinPlugins } from './plugins'
-import type { SessionInfo, SearchResult } from './types'
+import type { SessionInfo, SearchResult, FavoriteItem } from './types'
 import type { SearchContext } from './plugins/types'
+import { invoke } from '@tauri-apps/api/core'
+import { isTauriReady } from './utils/session'
+
+// Define sqlite_cache types for Tauri responses
+namespace sqlite_cache {
+  export interface FavoriteItem {
+    id: string
+    favorite_type: string
+    name: string
+    path: string
+    added_at: string
+  }
+}
 
 function App() {
   const { t } = useTranslation()
@@ -41,10 +54,65 @@ function App() {
   const { getBadgeType, clearBadge } = useSessionBadges(sessions)
 
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<'list' | 'directory' | 'project'>('project')
+  const [viewMode, setViewMode] = useState<'list' | 'project'>('project')
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [showRenameDialog, setShowRenameDialog] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [showFavorites, setShowFavorites] = useState(false)
+  const [favorites, setFavorites] = useState<FavoriteItem[]>([])
+  const [loadingFavorites, setLoadingFavorites] = useState(false)
+  const [isInitialized, setIsInitialized] = useState(false)
+
+  const loadFavorites = useCallback(async () => {
+    setLoadingFavorites(true)
+    try {
+      const result = await invoke<sqlite_cache.FavoriteItem[]>('get_all_favorites')
+      const formattedFavorites: FavoriteItem[] = result.map(f => ({
+        id: f.id,
+        type: f.favorite_type as 'session' | 'project',
+        name: f.name,
+        path: f.path,
+        addedAt: f.added_at,
+      }))
+      setFavorites(formattedFavorites)
+    } catch (error) {
+      console.error('Failed to load favorites:', error)
+      setFavorites([])
+    } finally {
+      setLoadingFavorites(false)
+    }
+  }, [])
+
+  const removeFavorite = useCallback(async (item: FavoriteItem) => {
+    if (!isTauriReady()) {
+      console.warn('Tauri not ready, skipping remove favorite')
+      return
+    }
+    try {
+      await invoke('remove_favorite', { id: item.id })
+      await loadFavorites()
+    } catch (error) {
+      console.error('Failed to remove favorite:', error)
+    }
+  }, [loadFavorites])
+
+  const toggleFavorite = useCallback(async (item: Omit<FavoriteItem, 'addedAt'>) => {
+    if (!isTauriReady()) {
+      console.warn('Tauri not ready, skipping toggle favorite')
+      return
+    }
+    try {
+      await invoke('toggle_favorite', {
+        id: item.id,
+        favoriteType: item.type,
+        name: item.name,
+        path: item.path,
+      })
+      await loadFavorites()
+    } catch (error) {
+      console.error('Failed to toggle favorite:', error)
+    }
+  }, [loadFavorites])
 
   const { searchResults, isSearching, handleSearch, clearSearch } = useSearch(setSelectedSession)
 
@@ -56,12 +124,22 @@ function App() {
 
   useEffect(() => {
     registerBuiltinPlugins()
+
+    const initialize = async () => {
+      await new Promise(resolve => setTimeout(resolve, 100))
+      setIsInitialized(true)
+    }
+
+    initialize()
   }, [])
 
   useEffect(() => {
+    if (!isInitialized) return
+
     loadSessions()
     loadSettings()
-  }, [loadSessions, loadSettings])
+    loadFavorites()
+  }, [isInitialized, loadSessions, loadSettings, loadFavorites])
 
   useFileWatcher({
     enabled: true,
@@ -136,13 +214,6 @@ function App() {
                 </svg>
               </button>
               <button
-                onClick={() => { setViewMode('directory'); setSelectedProject(null) }}
-                className={`p-1 rounded transition-colors ${viewMode === 'directory' ? 'text-blue-400 bg-[#2c2d3b]' : 'text-[#6a6f85] hover:text-white'}`}
-                title={t('app.viewMode.directory')}
-              >
-                <FolderOpen className="h-3.5 w-3.5" />
-              </button>
-              <button
                 onClick={() => { setViewMode('project'); setSelectedProject(null) }}
                 className={`p-1 rounded transition-colors ${viewMode === 'project' ? 'text-blue-400 bg-[#2c2d3b]' : 'text-[#6a6f85] hover:text-white'}`}
                 title={t('app.viewMode.project')}
@@ -153,11 +224,11 @@ function App() {
               </button>
             </div>
             <button
-              onClick={() => setSelectedSession(null)}
-              className={`p-1 rounded transition-colors ml-0.5 ${!selectedSession ? 'text-[#569cd6] bg-[#569cd6]/10' : 'text-[#6a6f85] hover:text-white hover:bg-[#2c2d3b]'}`}
-              title={t('dashboard.title')}
+              onClick={() => setShowFavorites(!showFavorites)}
+              className={`p-1 rounded transition-colors ml-0.5 ${showFavorites ? 'text-yellow-400 bg-[#2c2d3b]' : 'text-[#6a6f85] hover:text-white hover:bg-[#2c2d3b]'}`}
+              title={t('favorites.title')}
             >
-              <BarChart3 className="h-3.5 w-3.5" />
+              <Star className="h-3.5 w-3.5" />
             </button>
             <button
               onClick={() => setShowSettings(true)}
@@ -175,7 +246,17 @@ function App() {
           isSearching={isSearching}
         />
         <div className="flex-1 overflow-y-auto" ref={listScrollRef}>
-          {viewMode === 'project' && selectedProject ? (
+          {showFavorites ? (
+            <FavoritesPanel
+              sessions={sessions}
+              favorites={favorites}
+              selectedSession={selectedSession}
+              onSelectSession={handleSelectSession}
+              onRemoveFavorite={removeFavorite}
+              getBadgeType={getBadgeType}
+              loading={loadingFavorites}
+            />
+          ) : viewMode === 'project' && selectedProject ? (
             <div className="flex flex-col">
               <div className="flex items-center gap-2 px-3 py-2 border-b border-border/50 bg-background/30 flex-shrink-0 sticky top-0 z-10">
                 <button
@@ -209,6 +290,8 @@ function App() {
                   getBadgeType={getBadgeType}
                   scrollParentRef={listScrollRef}
                   showHeader={false}
+                  favorites={favorites}
+                  onToggleFavorite={toggleFavorite}
                 />
               </div>
             </div>
@@ -225,19 +308,8 @@ function App() {
               customCommand={customCommand}
               getBadgeType={getBadgeType}
               scrollParentRef={listScrollRef}
-            />
-          ) : viewMode === 'directory' ? (
-            <SessionListByDirectory
-              sessions={displayedSessions}
-              selectedSession={selectedSession}
-              onSelectSession={handleSelectSession}
-              onDeleteSession={handleDeleteSession}
-              loading={loading}
-              terminal={terminal}
-              piPath={piPath}
-              customCommand={customCommand}
-              getBadgeType={getBadgeType}
-              scrollParentRef={listScrollRef}
+              favorites={favorites}
+              onToggleFavorite={toggleFavorite}
             />
           ) : (
             <SessionList
@@ -251,6 +323,8 @@ function App() {
               piPath={piPath}
               customCommand={customCommand}
               scrollParentRef={listScrollRef}
+              favorites={favorites}
+              onToggleFavorite={toggleFavorite}
             />
           )}
         </div>

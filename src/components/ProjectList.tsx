@@ -1,6 +1,6 @@
 import type { RefObject } from 'react'
-import type { SessionInfo } from '../types'
-import { FolderOpen, Loader2, ArrowLeft } from 'lucide-react'
+import type { SessionInfo, FavoriteItem } from '../types'
+import { FolderOpen, Loader2, ArrowLeft, Star } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useVirtualizer } from '@tanstack/react-virtual'
@@ -20,6 +20,8 @@ interface ProjectListProps {
   getBadgeType?: (sessionId: string) => 'new' | 'updated' | null
   scrollParentRef?: RefObject<HTMLDivElement>
   showHeader?: boolean
+  favorites?: FavoriteItem[]
+  onToggleFavorite?: (item: Omit<FavoriteItem, 'addedAt'>) => void
 }
 
 interface Project {
@@ -43,6 +45,8 @@ export default function ProjectList({
   getBadgeType,
   scrollParentRef,
   showHeader = true,
+  favorites = [],
+  onToggleFavorite,
 }: ProjectListProps) {
   const { t } = useTranslation()
   // Use external selectedProject if provided, otherwise use internal state
@@ -131,12 +135,12 @@ export default function ProjectList({
           {virtualItems.map((virtualRow) => {
             const project = projects[virtualRow.index]
             if (!project) return null
+            const isFavorite = favorites.some(f => f.type === 'project' && f.id === project.dir)
             return (
               <div
                 key={project.dir}
                 data-index={virtualRow.index}
                 ref={projectsVirtualizer.measureElement}
-                onClick={() => handleSelectProject(project.dir)}
                 className="px-3 py-3 hover:bg-[#262738] cursor-pointer transition-colors border-b border-border/20"
                 style={{
                   position: 'absolute',
@@ -147,10 +151,13 @@ export default function ProjectList({
                 }}
               >
                 <div className="flex items-start gap-3">
-                  <div className="h-10 w-10 rounded-lg bg-[#1f2130] border border-border/40 flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <div
+                    onClick={() => handleSelectProject(project.dir)}
+                    className="h-10 w-10 rounded-lg bg-[#1f2130] border border-border/40 flex items-center justify-center flex-shrink-0 mt-0.5"
+                  >
                     <FolderOpen className="h-4 w-4 text-blue-400" />
                   </div>
-                  <div className="min-w-0 flex-1 space-y-2">
+                  <div className="min-w-0 flex-1 space-y-2" onClick={() => handleSelectProject(project.dir)}>
                     <div>
                       <div className="text-xs font-semibold truncate leading-tight">{project.dirName}</div>
                       <div className="text-[11px] text-muted-foreground/80 truncate">{project.dir}</div>
@@ -167,6 +174,25 @@ export default function ProjectList({
                       </span>
                     </div>
                   </div>
+                  {onToggleFavorite && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onToggleFavorite({
+                          type: 'project',
+                          id: project.dir,
+                          name: project.dirName,
+                          path: project.dir,
+                        })
+                      }}
+                      className={`p-1.5 rounded-lg transition-colors flex-shrink-0 mt-0.5 z-10 ${
+                        isFavorite ? 'text-yellow-400 bg-yellow-400/10' : 'text-muted-foreground hover:text-yellow-400 hover:bg-yellow-400/10'
+                      }`}
+                      title={isFavorite ? t('favorites.remove') : t('favorites.add')}
+                    >
+                      <Star className={`h-4 w-4 ${isFavorite ? 'fill-current' : ''}`} />
+                    </button>
+                  )}
                 </div>
               </div>
             )
@@ -202,6 +228,7 @@ export default function ProjectList({
         {sessionsVirtualizer.getVirtualItems().map((virtualRow) => {
           const session = projectSessions[virtualRow.index]
           if (!session) return null
+          const isFavorite = favorites.some(f => f.type === 'session' && f.id === session.id)
           const hoverTitle = [
             session.name || session.first_message || t('session.list.untitled'),
             `路径: ${session.path}`,
@@ -251,6 +278,25 @@ export default function ProjectList({
                   <span className="px-2 py-0.5 rounded-md bg-[#222334] border border-border/30 text-right">
                     {session.message_count} {t('session.list.messages')}
                   </span>
+                  {onToggleFavorite && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onToggleFavorite({
+                          type: 'session',
+                          id: session.id,
+                          name: session.name || session.first_message || t('session.list.untitled'),
+                          path: session.path,
+                        })
+                      }}
+                      className={`p-1 rounded transition-opacity opacity-0 group-hover:opacity-100 z-10 ${
+                        isFavorite ? 'opacity-100 text-yellow-400' : 'text-muted-foreground hover:text-yellow-400'
+                      }`}
+                      title={isFavorite ? t('favorites.remove') : t('favorites.add')}
+                    >
+                      <Star className={`h-3.5 w-3.5 ${isFavorite ? 'fill-current' : ''}`} />
+                    </button>
+                  )}
                   <OpenInTerminalButton
                     session={session}
                     terminal={terminal}

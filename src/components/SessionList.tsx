@@ -1,8 +1,8 @@
 import type { RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import type { SessionInfo } from '../types'
-import { MessageSquare, Trash2, Loader2, Search, FolderOpen, User, Bot } from 'lucide-react'
+import type { SessionInfo, FavoriteItem } from '../types'
+import { MessageSquare, Trash2, Loader2, Search, FolderOpen, User, Bot, Star } from 'lucide-react'
 import OpenInBrowserButton from './OpenInBrowserButton'
 import OpenInTerminalButton from './OpenInTerminalButton'
 import { SessionBadge } from './SessionBadge'
@@ -19,6 +19,8 @@ interface SessionListProps {
   piPath?: string
   customCommand?: string
   scrollParentRef?: RefObject<HTMLDivElement>
+  favorites?: FavoriteItem[]
+  onToggleFavorite?: (item: Omit<FavoriteItem, 'addedAt'>) => void
 }
 
 export default function SessionList({
@@ -32,6 +34,8 @@ export default function SessionList({
   piPath,
   customCommand,
   scrollParentRef,
+  favorites = [],
+  onToggleFavorite,
 }: SessionListProps) {
   const { t } = useTranslation()
   const rowVirtualizer = useVirtualizer({
@@ -71,6 +75,7 @@ export default function SessionList({
           const session = sessions[virtualRow.index]
           if (!session) return null
 
+          const isFavorite = favorites.some(f => f.type === 'session' && f.id === session.id)
           const createdLabel = formatShortTime(session.created)
           const updatedLabel = formatShortTime(session.modified)
           const hoverTitle = [
@@ -117,6 +122,25 @@ export default function SessionList({
                       )}
                     </div>
                     <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                      {onToggleFavorite && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onToggleFavorite({
+                              type: 'session',
+                              id: session.id,
+                              name: session.name || session.first_message || t('session.list.untitled'),
+                              path: session.path,
+                            })
+                          }}
+                          className={`p-1.5 rounded-md transition-all z-10 ${
+                            isFavorite ? 'text-yellow-400 bg-yellow-400/10' : 'text-muted-foreground hover:text-yellow-400 hover:bg-yellow-400/10'
+                          }`}
+                          title={isFavorite ? t('favorites.remove') : t('favorites.add')}
+                        >
+                          <Star className={`h-3.5 w-3.5 ${isFavorite ? 'fill-current' : ''}`} />
+                        </button>
+                      )}
                       <OpenInTerminalButton
                         session={session}
                         terminal={terminal}
