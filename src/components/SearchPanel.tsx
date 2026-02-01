@@ -14,17 +14,14 @@ export default function SearchPanel({ onSearch, resultCount, isSearching }: Sear
   const debounceRef = useRef<NodeJS.Timeout>()
 
   useEffect(() => {
-    console.log('[SearchPanel] query changed:', query)
-    console.log('[SearchPanel] isSearching:', isSearching)
-    console.log('[SearchPanel] resultCount:', resultCount)
-
     if (debounceRef.current) {
       clearTimeout(debounceRef.current)
     }
 
     debounceRef.current = setTimeout(() => {
-      console.log('[SearchPanel] Debounced search triggered for query:', query)
-      onSearch(query)
+      if (query.trim()) {
+        onSearch(query)
+      }
     }, 200)
 
     return () => {
@@ -32,7 +29,7 @@ export default function SearchPanel({ onSearch, resultCount, isSearching }: Sear
         clearTimeout(debounceRef.current)
       }
     }
-  }, [query, onSearch, isSearching, resultCount])
+  }, [query, onSearch])
 
   const handleClear = () => {
     setQuery('')

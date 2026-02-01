@@ -23,16 +23,16 @@ export default function AssistantMessage({ content, timestamp, entryId, entries 
     <div className="assistant-message" id={`entry-${entryId}`}>
       {timestamp && <div className="message-timestamp">{formatDate(timestamp)}</div>}
 
+      {/* Thinking content */}
+      {showThinking && thinkingBlocks.map((block, index) => (
+        <ThinkingBlock key={`thinking-${index}`} content={block.thinking!} />
+      ))}
+
       {/* Text content */}
       {textBlocks.map((block, index) => (
         <div key={`text-${index}`} className="assistant-text markdown-content">
           <MarkdownContent content={block.text!} searchQuery={searchQuery} />
         </div>
-      ))}
-
-      {/* Thinking content */}
-      {showThinking && thinkingBlocks.map((block, index) => (
-        <ThinkingBlock key={`thinking-${index}`} content={block.thinking!} />
       ))}
 
       {/* Tool calls */}

@@ -11,15 +11,11 @@ interface ExportDialogProps {
 export default function ExportDialog({ session, onExport, onClose }: ExportDialogProps) {
   const { t } = useTranslation('export')
 
-  console.log('[ExportDialog] Rendered', { sessionName: session.name })
-
   const handleExport = (format: 'html' | 'md' | 'json') => {
-    console.log('[ExportDialog] Export clicked:', format)
     onExport(format)
   }
 
   const handleClose = () => {
-    console.log('[ExportDialog] Close clicked')
     onClose()
   }
 

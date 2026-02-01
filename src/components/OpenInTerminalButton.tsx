@@ -65,7 +65,7 @@ export default function OpenInTerminalButton({
         path: session.path,
         cwd: session.cwd,
         terminal: terminal === 'custom' ? customCommand : terminal,
-        piPath: piPath || null,
+        pi_path: piPath || null,
       })
       onSuccess?.()
     } catch (err) {
