@@ -1,8 +1,6 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { invoke } from '@tauri-apps/api/core'
-import { save } from '@tauri-apps/plugin-dialog'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { BarChart3, FolderOpen, Settings } from 'lucide-react'
+import { BarChart3, FolderOpen, Settings, ArrowLeft } from 'lucide-react'
 import SessionList from './components/SessionList'
 import SessionListByDirectory from './components/SessionListByDirectory'
 import ProjectList from './components/ProjectList'
@@ -16,102 +14,68 @@ import { CommandPalette } from './components/command'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useFileWatcher } from './hooks/useFileWatcher'
 import { useSessionBadges } from './hooks/useSessionBadges'
+import { useSessions } from './hooks/useSessions'
+import { useSearch } from './hooks/useSearch'
+import { useAppSettings } from './hooks/useAppSettings'
+import { useSessionActions } from './hooks/useSessionActions'
 import { registerBuiltinPlugins } from './plugins'
 import type { SessionInfo, SearchResult } from './types'
 import type { SearchContext } from './plugins/types'
-import i18n from './i18n'
 
 function App() {
   const { t } = useTranslation()
-  const [sessions, setSessions] = useState<SessionInfo[]>([])
-  const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null)
-  const selectedSessionRef = useRef<SessionInfo | null>(null)
+  const listScrollRef = useRef<HTMLDivElement>(null)
+
+  const {
+    sessions,
+    loading,
+    selectedSession,
+    setSelectedSession,
+    loadSessions,
+    handleDeleteSession,
+    handleRenameSession,
+  } = useSessions()
+
+  const { terminal, piPath, customCommand, loadSettings } = useAppSettings()
+  const { handleExportSession } = useSessionActions()
+  const { getBadgeType, clearBadge } = useSessionBadges(sessions)
+
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
-  const [searchResults, setSearchResults] = useState<SearchResult[]>([])
-  const [isSearching, setIsSearching] = useState(false)
-  const [loading, setLoading] = useState(true)
+  const [viewMode, setViewMode] = useState<'list' | 'directory' | 'project'>('project')
   const [showExportDialog, setShowExportDialog] = useState(false)
   const [showRenameDialog, setShowRenameDialog] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const [viewMode, setViewMode] = useState<'list' | 'directory' | 'project'>('project')
-  const [terminal, setTerminal] = useState<'iterm2' | 'terminal' | 'vscode' | 'custom'>('iterm2')
-  const [piPath, setPiPath] = useState<string>('pi')
-  const [customCommand, setCustomCommand] = useState<string>('')
-  const listScrollRef = useRef<HTMLDivElement>(null)
 
-  // 注册内置插件
+  const { searchResults, isSearching, handleSearch, clearSearch } = useSearch(setSelectedSession)
+
+  const handleSelectSession = useCallback((session: SessionInfo) => {
+    setSelectedSession(session)
+    clearSearch()
+    clearBadge(session.id)
+  }, [setSelectedSession, clearSearch, clearBadge])
+
   useEffect(() => {
     registerBuiltinPlugins()
   }, [])
 
   useEffect(() => {
-    selectedSessionRef.current = selectedSession
-  }, [selectedSession])
+    loadSessions()
+    loadSettings()
+  }, [loadSessions, loadSettings])
 
-  // 加载会话列表
-  const loadSessions = useCallback(async () => {
-    console.log('[App] loadSessions called')
-    try {
-      setLoading(true)
-      console.log('[App] Invoking scan_sessions...')
-      const result = await invoke<SessionInfo[]>('scan_sessions')
-      console.log('[App] scan_sessions returned', result.length, 'sessions')
-      setSessions(result)
-      console.log('[App] Sessions state updated')
+  useFileWatcher({
+    enabled: true,
+    debounceMs: 2000,
+    onSessionsChanged: () => {
+      loadSessions()
+    },
+  })
 
-      const currentSelection = selectedSessionRef.current
-      if (currentSelection) {
-        const matched = result.find(s => s.id === currentSelection.id || s.path === currentSelection.path)
-        if (!matched) {
-          try {
-            await invoke('read_session_file', { path: currentSelection.path })
-          } catch (error) {
-            console.warn('[App] Selected session missing on refresh, clearing selection:', error)
-            setSelectedSession(null)
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[App] Failed to load sessions:', error)
-      alert(`${t('app.errors.loadSessions')}: ${error}`)
-    } finally {
-      console.log('[App] loadSessions completed, setLoading(false)')
-      setLoading(false)
-    }
-  }, [t])
-
-  // 加载终端设置和语言设置
-  const loadSettings = useCallback(async () => {
-    try {
-      // 加载 Rust 端设置（终端配置等）
-      const settings = await invoke('load_app_settings') as any
-      if (settings?.terminal) {
-        setTerminal(settings.terminal.default_terminal || 'iterm2')
-        setPiPath(settings.terminal.pi_command_path || 'pi')
-        setCustomCommand(settings.terminal.custom_terminal_command || '')
-      }
-
-      // 加载前端设置（语言等）
-      const frontendSettings = localStorage.getItem('pi-session-manager-settings')
-      if (frontendSettings) {
-        const parsed = JSON.parse(frontendSettings)
-        if (parsed?.language?.locale) {
-          i18n.changeLanguage(parsed.language.locale)
-        }
-      }
-    } catch (error) {
-      console.error('[App] Failed to load settings:', error)
-    }
-  }, [i18n])
-
-  // Keyboard shortcuts
-  const shortcuts = useCallback(() => ({
+  const shortcuts = useMemo(() => ({
     'cmd+r': () => loadSessions(),
     'cmd+f': () => document.querySelector<HTMLInputElement>('input[type="text"]')?.focus(),
     'cmd+,': () => setShowSettings(true),
     'escape': () => {
-      console.log('[Shortcuts] Escape pressed', { showExportDialog, showRenameDialog, showSettings, selectedProject })
-
       if (showSettings) {
         setShowSettings(false)
       } else if (showExportDialog) {
@@ -122,241 +86,65 @@ function App() {
         setSelectedProject(null)
       } else {
         setSelectedSession(null)
-        setSearchResults([])
+        clearSearch()
       }
     },
-  }), [selectedProject, showSettings, showExportDialog, showRenameDialog, loadSessions])
+  }), [showSettings, showExportDialog, showRenameDialog, selectedProject, loadSessions, setSelectedSession, clearSearch])
 
-  useKeyboardShortcuts(shortcuts())
+  useKeyboardShortcuts(shortcuts)
 
-  // 创建 SearchContext
   const commandContext = useMemo<SearchContext>(() => ({
     sessions,
     selectedProject,
     selectedSession,
     setSelectedSession,
     setSelectedProject,
-    closeCommandMenu: () => {}, // 由 CommandPalette 内部处理
-    searchCurrentProjectOnly: false, // 默认值，会被 CommandPalette 覆盖
+    closeCommandMenu: () => {},
+    searchCurrentProjectOnly: false,
     t
-  }), [sessions, selectedProject, selectedSession, t])
+  }), [sessions, selectedProject, selectedSession, t, setSelectedSession])
 
-  // 初始加载
-  useEffect(() => {
-    loadSessions()
-    loadSettings()
-  }, [loadSessions, loadSettings])
-
-  // 文件监听：自动刷新会话列表（带 2 秒防抖）
-  useFileWatcher({
-    enabled: true,
-    debounceMs: 2000, // 2 秒防抖，合并频繁的文件变化
-    onSessionsChanged: () => {
-      console.log('[App] 📡 File watcher triggered, reloading sessions...')
-      loadSessions()
-    },
-  })
-
-  // Badge 状态管理
-  const { getBadgeType, clearBadge } = useSessionBadges(sessions)
-
-  // 选择会话时清除 badge
-  const handleSelectSession = useCallback((session: SessionInfo) => {
-    setSelectedSession(session)
-    setSearchResults([])
-    clearBadge(session.id)
-  }, [clearBadge])
-
-  const handleSearch = useCallback(async (query: string) => {
-    console.log('[Search] handleSearch called with query:', query)
-    console.log('[Search] sessions count:', sessions.length)
-
-    if (!query.trim()) {
-      console.log('[Search] Empty query, clearing results')
-      setSearchResults([])
-      setSelectedSession(null)
-      return
-    }
-
-    try {
-      setIsSearching(true)
-      console.log('[Search] Set isSearching = true, invoking search_sessions...')
-
-      const results = await invoke<SearchResult[]>('search_sessions', {
-        sessions,
-        query,
-        searchMode: 'content',
-        roleFilter: 'all',
-        includeTools: false,
-      })
-
-      console.log('[Search] Search completed, results:', results)
-      console.log('[Search] Results count:', results.length)
-      setSearchResults(results)
-      console.log('[Search] Set searchResults')
-    } catch (error) {
-      console.error('[Search] Search failed:', error)
-      console.error('[Search] Error details:', JSON.stringify(error))
-    } finally {
-      console.log('[Search] Finally block, setting isSearching = false')
-      setIsSearching(false)
-      console.log('[Search] isSearching set to false')
-    }
-  }, [sessions])
-
-  const handleDeleteSession = async (session: SessionInfo) => {
-    if (!confirm(t('app.confirm.deleteSession', { name: session.name || t('common.untitled') }))) {
-      return
-    }
-
-    try {
-      await invoke('delete_session', { path: session.path })
-      setSessions(sessions.filter(s => s.id !== session.id))
-      if (selectedSession?.id === session.id) {
-        setSelectedSession(null)
-      }
-    } catch (error) {
-      console.error('Failed to delete session:', error)
-      alert(t('app.errors.deleteSession'))
-    }
-  }
-
-  const handleRenameSession = async (newName: string) => {
+  const onRenameSession = async (newName: string) => {
     if (!selectedSession) return
-
-    try {
-      await invoke('rename_session', {
-        path: selectedSession.path,
-        newName
-      })
-      // Update local state
-      const updatedSessions = sessions.map(s =>
-        s.id === selectedSession.id ? { ...s, name: newName } : s
-      )
-      setSessions(updatedSessions)
-      setSelectedSession({ ...selectedSession, name: newName })
-      setShowRenameDialog(false)
-    } catch (error) {
-      console.error('Failed to rename session:', error)
-      alert(t('app.errors.renameSession'))
-    }
+    await handleRenameSession(selectedSession, newName)
+    setShowRenameDialog(false)
   }
 
-  const handleExportSession = async (format: 'html' | 'md' | 'json') => {
-    if (!selectedSession) {
-      console.error('[Export] No session selected')
-      return
-    }
-
-    console.log('[Export] Starting export:', { format, sessionPath: selectedSession.path, sessionName: selectedSession.name })
-
-    const extension = format === 'md' ? 'md' : format
-    const defaultPath = `${selectedSession.name || 'session'}.${extension}`
-
-    console.log('[Export] Opening save dialog:', { defaultPath })
-
-    const filePath = await save({
-      filters: [{
-        name: format.toUpperCase(),
-        extensions: [extension]
-      }],
-      defaultPath
-    })
-
-    if (!filePath) {
-      console.log('[Export] User cancelled save dialog')
-      return
-    }
-
-    console.log('[Export] File path selected:', filePath)
-
-    try {
-      console.log('[Export] Invoking export_session command:', {
-        path: selectedSession.path,
-        format,
-        outputPath: filePath
-      })
-
-      await invoke('export_session', {
-        path: selectedSession.path,
-        format,
-        outputPath: filePath
-      })
-
-      console.log('[Export] Export successful')
-      alert(t('app.errors.exportSuccess'))
-      setShowExportDialog(false)
-    } catch (error) {
-      console.error('[Export] Export failed:', error)
-      alert(`${t('app.errors.exportFailed')}: ${error}`)
-    }
+  const onExportSession = async (format: 'html' | 'md' | 'json') => {
+    if (!selectedSession) return
+    await handleExportSession(selectedSession, format)
+    setShowExportDialog(false)
   }
 
-  console.log('[App] Render - isSearching:', isSearching, 'searchResults:', searchResults.length, 'sessions:', sessions.length)
+  const displayedSessions = isSearching
+    ? mapSearchResults(searchResults, sessions)
+    : sessions
 
   return (
     <div className="flex h-screen bg-background text-foreground">
-      {/* Left Sidebar */}
       <div className="w-80 border-r border-[#2c2d3b] flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between px-3 py-2.5 border-b border-[#2c2d3b]">
-          <div className="flex items-center gap-2 min-w-0">
-            {selectedProject && (
-              <button
-                onClick={() => setSelectedProject(null)}
-                className="text-blue-400 hover:text-blue-300 text-sm flex items-center gap-1 flex-shrink-0"
-              >
-                ← {t('common.back')}
-              </button>
-            )}
-            <h1 className="font-semibold text-sm truncate">{selectedProject || t('app.projects')}</h1>
-          </div>
-          <div className="flex items-center gap-0.5 flex-shrink-0">
-            {/* View Mode Group */}
+        <div className="flex items-center justify-end px-3 py-2.5 border-b border-[#2c2d3b]">
+          <div className="flex items-center gap-0.5">
             <div className="flex items-center bg-[#252636] rounded-lg p-0.5 mr-1">
-              {/* List View */}
               <button
-                onClick={() => {
-                  setViewMode('list')
-                  setSelectedProject(null)
-                }}
-                className={`p-1 rounded transition-colors ${
-                  viewMode === 'list'
-                    ? 'text-blue-400 bg-[#2c2d3b]'
-                    : 'text-[#6a6f85] hover:text-white'
-                }`}
+                onClick={() => { setViewMode('list'); setSelectedProject(null) }}
+                className={`p-1 rounded transition-colors ${viewMode === 'list' ? 'text-blue-400 bg-[#2c2d3b]' : 'text-[#6a6f85] hover:text-white'}`}
                 title={t('app.viewMode.list')}
               >
                 <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
                 </svg>
               </button>
-              {/* Directory View */}
               <button
-                onClick={() => {
-                  setViewMode('directory')
-                  setSelectedProject(null)
-                }}
-                className={`p-1 rounded transition-colors ${
-                  viewMode === 'directory'
-                    ? 'text-blue-400 bg-[#2c2d3b]'
-                    : 'text-[#6a6f85] hover:text-white'
-                }`}
+                onClick={() => { setViewMode('directory'); setSelectedProject(null) }}
+                className={`p-1 rounded transition-colors ${viewMode === 'directory' ? 'text-blue-400 bg-[#2c2d3b]' : 'text-[#6a6f85] hover:text-white'}`}
                 title={t('app.viewMode.directory')}
               >
                 <FolderOpen className="h-3.5 w-3.5" />
               </button>
-              {/* Project View */}
               <button
-                onClick={() => {
-                  setViewMode('project')
-                  setSelectedProject(null)
-                }}
-                className={`p-1 rounded transition-colors ${
-                  viewMode === 'project'
-                    ? 'text-blue-400 bg-[#2c2d3b]'
-                    : 'text-[#6a6f85] hover:text-white'
-                }`}
+                onClick={() => { setViewMode('project'); setSelectedProject(null) }}
+                className={`p-1 rounded transition-colors ${viewMode === 'project' ? 'text-blue-400 bg-[#2c2d3b]' : 'text-[#6a6f85] hover:text-white'}`}
                 title={t('app.viewMode.project')}
               >
                 <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -364,19 +152,13 @@ function App() {
                 </svg>
               </button>
             </div>
-            {/* Dashboard Button */}
             <button
               onClick={() => setSelectedSession(null)}
-              className={`p-1 rounded transition-colors ml-0.5 ${
-                !selectedSession
-                  ? 'text-[#569cd6] bg-[#569cd6]/10'
-                  : 'text-[#6a6f85] hover:text-white hover:bg-[#2c2d3b]'
-              }`}
+              className={`p-1 rounded transition-colors ml-0.5 ${!selectedSession ? 'text-[#569cd6] bg-[#569cd6]/10' : 'text-[#6a6f85] hover:text-white hover:bg-[#2c2d3b]'}`}
               title={t('dashboard.title')}
             >
               <BarChart3 className="h-3.5 w-3.5" />
             </button>
-            {/* Settings Button */}
             <button
               onClick={() => setShowSettings(true)}
               className="p-1 rounded transition-colors ml-0.5 text-[#6a6f85] hover:text-white hover:bg-[#2c2d3b]"
@@ -388,14 +170,51 @@ function App() {
         </div>
 
         <SearchPanel
-          onSearch={handleSearch}
+          onSearch={(query) => handleSearch(query, sessions)}
           resultCount={searchResults.length}
           isSearching={isSearching}
         />
         <div className="flex-1 overflow-y-auto" ref={listScrollRef}>
-          {viewMode === 'project' ? (
+          {viewMode === 'project' && selectedProject ? (
+            <div className="flex flex-col">
+              <div className="flex items-center gap-2 px-3 py-2 border-b border-border/50 bg-background/30 flex-shrink-0 sticky top-0 z-10">
+                <button
+                  onClick={() => setSelectedProject(null)}
+                  className="p-1 hover:bg-accent rounded transition-colors flex-shrink-0"
+                  title={t('project.list.back')}
+                >
+                  <ArrowLeft className="h-4 w-4 text-muted-foreground" />
+                </button>
+                <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                  <FolderOpen className="h-3.5 w-3.5 text-blue-400 flex-shrink-0" />
+                  <span className="text-sm font-medium truncate">
+                    {displayedSessions.find(s => s.cwd === selectedProject)?.cwd.split('/').pop() || selectedProject.split('/').pop()}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground flex-shrink-0">
+                    ({displayedSessions.filter(s => s.cwd === selectedProject).length})
+                  </span>
+                </div>
+              </div>
+              <div>
+                <ProjectList
+                  sessions={displayedSessions}
+                  selectedSession={selectedSession}
+                  selectedProject={selectedProject}
+                  onSelectSession={handleSelectSession}
+                  onSelectProject={setSelectedProject}
+                  loading={loading}
+                  terminal={terminal}
+                  piPath={piPath}
+                  customCommand={customCommand}
+                  getBadgeType={getBadgeType}
+                  scrollParentRef={listScrollRef}
+                  showHeader={false}
+                />
+              </div>
+            </div>
+          ) : viewMode === 'project' ? (
             <ProjectList
-              sessions={isSearching ? mapSearchResults(searchResults, sessions) : sessions}
+              sessions={displayedSessions}
               selectedSession={selectedSession}
               selectedProject={selectedProject}
               onSelectSession={handleSelectSession}
@@ -409,7 +228,7 @@ function App() {
             />
           ) : viewMode === 'directory' ? (
             <SessionListByDirectory
-              sessions={isSearching ? mapSearchResults(searchResults, sessions) : sessions}
+              sessions={displayedSessions}
               selectedSession={selectedSession}
               onSelectSession={handleSelectSession}
               onDeleteSession={handleDeleteSession}
@@ -422,7 +241,7 @@ function App() {
             />
           ) : (
             <SessionList
-              sessions={isSearching ? mapSearchResults(searchResults, sessions) : sessions}
+              sessions={displayedSessions}
               selectedSession={selectedSession}
               onSelectSession={handleSelectSession}
               onDeleteSession={handleDeleteSession}
@@ -437,7 +256,6 @@ function App() {
         </div>
       </div>
 
-      {/* Main Content */}
       <div className="flex-1 overflow-hidden flex flex-col">
         <div className="flex-1 overflow-hidden">
           {selectedSession ? (
@@ -451,11 +269,11 @@ function App() {
               customCommand={customCommand}
             />
           ) : (
-            <Dashboard 
-              sessions={selectedProject 
+            <Dashboard
+              sessions={selectedProject
                 ? sessions.filter(s => s.cwd === selectedProject)
                 : sessions
-              } 
+              }
               onSessionSelect={setSelectedSession}
               projectName={selectedProject || undefined}
             />
@@ -463,45 +281,37 @@ function App() {
         </div>
       </div>
 
-      {/* Export Dialog */}
       {showExportDialog && selectedSession && (
         <ExportDialog
           session={selectedSession}
-          onExport={handleExportSession}
+          onExport={onExportSession}
           onClose={() => setShowExportDialog(false)}
         />
       )}
 
-      {/* Rename Dialog */}
       {showRenameDialog && selectedSession && (
         <RenameDialog
           session={selectedSession}
-          onRename={handleRenameSession}
+          onRename={onRenameSession}
           onClose={() => setShowRenameDialog(false)}
         />
       )}
 
-      {/* Settings Panel */}
       <SettingsPanel
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
       />
 
-      {/* Command Palette */}
       <CommandPalette context={commandContext} />
     </div>
   )
 }
 
 function mapSearchResults(results: SearchResult[], allSessions: SessionInfo[]): SessionInfo[] {
-  console.log('[mapSearchResults] Mapping', results.length, 'search results')
-  console.log('[mapSearchResults] allSessions count:', allSessions.length)
-
   return results.map((r) => {
-    // Find the original session to preserve cwd and other metadata
     const originalSession = allSessions.find(s => s.id === r.session_id)
 
-    const mapped = {
+    return {
       path: r.session_path,
       id: r.session_id,
       cwd: originalSession?.cwd || '',
@@ -514,15 +324,6 @@ function mapSearchResults(results: SearchResult[], allSessions: SessionInfo[]): 
       last_message: originalSession?.last_message || '',
       last_message_role: originalSession?.last_message_role || 'user',
     }
-
-    console.log('[mapSearchResults] Mapped result:', {
-      id: r.session_id,
-      name: mapped.name,
-      cwd: mapped.cwd,
-      originalSessionFound: !!originalSession
-    })
-
-    return mapped
   })
 }
 
