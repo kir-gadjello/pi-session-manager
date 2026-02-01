@@ -1,7 +1,8 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
 import { ArrowUp, ArrowDown } from 'lucide-react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import type { SessionInfo, SessionEntry } from '../types'
 import { parseSessionEntries, computeStats } from '../utils/session'
 import { extractTextFromHTML, containsSearchQuery } from '../utils/search'
@@ -33,6 +34,7 @@ const SIDEBAR_MIN_WIDTH = 200
 const SIDEBAR_MAX_WIDTH = 600
 const SIDEBAR_DEFAULT_WIDTH = 400
 const SIDEBAR_WIDTH_KEY = 'pi-session-manager-sidebar-width'
+const MESSAGE_ITEM_GAP = 16
 
 function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2', piPath, customCommand }: SessionViewerProps) {
   const { t } = useTranslation()
@@ -49,6 +51,7 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
   const [isResizing, setIsResizing] = useState(false)
   const startXRef = useRef(0)
   const startWidthRef = useRef(0)
+  const sidebarWidthRef = useRef(sidebarWidth)
 
   // 增量更新状态
   const [lineCount, setLineCount] = useState(0)
@@ -59,34 +62,22 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<string[]>([])
   const [currentResultIndex, setCurrentResultIndex] = useState(0)
+  const [isAtBottom, setIsAtBottom] = useState(true)
+  const [hasNewMessages, setHasNewMessages] = useState(false)
 
   const messagesContainerRef = useRef<HTMLDivElement>(null)
   const sidebarRef = useRef<HTMLDivElement>(null)
   const resizeHandleRef = useRef<HTMLDivElement>(null)
-
-  // 滚动到顶部
-  const scrollToTop = useCallback(() => {
-    if (messagesContainerRef.current) {
-      messagesContainerRef.current.scrollTo({
-        top: 0,
-        behavior: 'smooth'
-      })
-    }
-  }, [])
-
-  // 滚动到底部
-  const scrollToBottom = useCallback(() => {
-    if (messagesContainerRef.current) {
-      messagesContainerRef.current.scrollTo({
-        top: messagesContainerRef.current.scrollHeight,
-        behavior: 'smooth'
-      })
-    }
-  }, [])
+  const isAtBottomRef = useRef(true)
 
   useEffect(() => {
+    lastModifiedTimeRef.current = 0
+    setLineCount(0)
+    setEntries([])
+    setActiveEntryId(null)
+    setHasNewMessages(false)
     loadSession()
-  }, [session])
+  }, [session.path])
 
   // 监听会话文件变化，增量更新
   useEffect(() => {
@@ -96,16 +87,7 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
 
     const checkFileChanges = async () => {
       try {
-        // 获取文件修改时间
-        const stats = await invoke<any>('get_file_stats', { path: session.path })
-        const currentModified = stats.modifiedAt || stats.modified || 0
-
-        // 如果文件被修改了，执行增量更新
-        if (currentModified > lastModifiedTimeRef.current) {
-          console.log(`[SessionViewer] File modified: ${session.path}`)
-          lastModifiedTimeRef.current = currentModified
-          await loadIncremental()
-        }
+        await loadIncremental()
       } catch (err) {
         console.error('Failed to check file changes:', err)
       }
@@ -152,6 +134,24 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [toggleThinking, toggleToolsExpanded])
 
+  const searchableMessages = useMemo(() => {
+    if (!searchQuery.trim()) return []
+    const results: { id: string; plainText: string }[] = []
+    entries.forEach(entry => {
+      if (entry.type !== 'message' || !entry.message) return
+      const content = entry.message.content
+      const textItems = content.filter(c => c.type === 'text' && c.text)
+      const text = textItems.map(c => c.text).join('\n')
+      if (!text) return
+      const html = parseMarkdown(text)
+      const plainText = extractTextFromHTML(html)
+      if (plainText) {
+        results.push({ id: entry.id, plainText })
+      }
+    })
+    return results
+  }, [entries, searchQuery])
+
   // 执行搜索
   useEffect(() => {
     if (!searchQuery.trim()) {
@@ -162,31 +162,15 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
 
     const results: string[] = []
     
-    entries.forEach(entry => {
-      if (entry.type === 'message' && entry.message) {
-        const content = entry.message.content
-        
-        // 提取文本内容
-        const textItems = content.filter(c => c.type === 'text' && c.text)
-        const text = textItems.map(c => c.text).join('\n')
-        
-        if (text) {
-          // 解析 Markdown 为 HTML
-          const html = parseMarkdown(text)
-          // 提取纯文本
-          const plainText = extractTextFromHTML(html)
-          
-          // 检查是否包含搜索关键词
-          if (containsSearchQuery(plainText, searchQuery)) {
-            results.push(entry.id)
-          }
-        }
+    searchableMessages.forEach(({ id, plainText }) => {
+      if (containsSearchQuery(plainText, searchQuery)) {
+        results.push(id)
       }
     })
 
     setSearchResults(results)
     setCurrentResultIndex(0)
-  }, [searchQuery, entries])
+  }, [searchQuery, searchableMessages])
 
   // 滚动到当前搜索结果
   useEffect(() => {
@@ -196,28 +180,114 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
     }
   }, [currentResultIndex, searchResults])
 
+  const renderableEntries = useMemo(() => {
+    return entries.filter(entry => {
+      if (entry.type === 'message') {
+        const role = entry.message?.role
+        return role === 'user' || role === 'assistant'
+      }
+      return (
+        entry.type === 'model_change' ||
+        entry.type === 'compaction' ||
+        entry.type === 'branch_summary' ||
+        entry.type === 'custom_message'
+      )
+    })
+  }, [entries])
+
+  const entryIndexById = useMemo(() => {
+    const map = new Map<string, number>()
+    renderableEntries.forEach((entry, index) => {
+      map.set(entry.id, index)
+    })
+    return map
+  }, [renderableEntries])
+
+  const estimateEntrySize = useCallback((index: number) => {
+    const entry = renderableEntries[index]
+    if (!entry) return 140
+    switch (entry.type) {
+      case 'message':
+        return 220
+      case 'model_change':
+        return 64
+      case 'compaction':
+        return 140
+      case 'branch_summary':
+        return 140
+      case 'custom_message':
+        return 120
+      default:
+        return 120
+    }
+  }, [entries])
+
+  const rowVirtualizer = useVirtualizer({
+    count: renderableEntries.length,
+    getScrollElement: () => messagesContainerRef.current,
+    estimateSize: estimateEntrySize,
+    overscan: 8
+  })
+
+  // 滚动到顶部
+  const scrollToTop = useCallback(() => {
+    if (!messagesContainerRef.current) return
+    if (renderableEntries.length === 0) return
+    rowVirtualizer.scrollToIndex(0, { align: 'start' })
+  }, [renderableEntries.length, rowVirtualizer])
+
+  // 滚动到底部
+  const scrollToBottom = useCallback(() => {
+    if (!messagesContainerRef.current) return
+    if (renderableEntries.length === 0) return
+    rowVirtualizer.scrollToIndex(renderableEntries.length - 1, { align: 'end' })
+  }, [renderableEntries.length, rowVirtualizer])
+
   useEffect(() => {
     if (activeEntryId && messagesContainerRef.current) {
-      // 使用 requestAnimationFrame 确保 DOM 已更新
-      requestAnimationFrame(() => {
+      const targetIndex = entryIndexById.get(activeEntryId)
+      if (targetIndex === undefined) return
+
+      rowVirtualizer.scrollToIndex(targetIndex, { align: 'center' })
+
+      const tryHighlight = () => {
         const element = document.getElementById(`entry-${activeEntryId}`)
-        if (element) {
-          // 使用 'center' 而不是 'nearest' 以确保元素在视口中央
-          element.scrollIntoView({ 
-            behavior: 'smooth', 
-            block: 'center',
-            inline: 'nearest'
-          })
-          
-          // 添加高亮效果
-          element.classList.add('highlight')
+        if (!element) return false
+        element.classList.add('highlight')
+        setTimeout(() => {
+          element.classList.remove('highlight')
+        }, 2000)
+        return true
+      }
+
+      requestAnimationFrame(() => {
+        if (!tryHighlight()) {
           setTimeout(() => {
-            element.classList.remove('highlight')
-          }, 2000)
+            tryHighlight()
+          }, 50)
         }
       })
     }
-  }, [activeEntryId])
+  }, [activeEntryId, entryIndexById, rowVirtualizer])
+
+  useEffect(() => {
+    const container = messagesContainerRef.current
+    if (!container) return
+
+    const handleScroll = () => {
+      const distanceToBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+      const atBottom = distanceToBottom <= 8
+      isAtBottomRef.current = atBottom
+      setIsAtBottom(atBottom)
+      if (atBottom) {
+        setHasNewMessages(false)
+      }
+    }
+
+    handleScroll()
+    container.addEventListener('scroll', handleScroll)
+    return () => container.removeEventListener('scroll', handleScroll)
+  }, [loading, error])
 
   // 拖拽调整宽度
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -236,12 +306,13 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
       
       if (newWidth >= SIDEBAR_MIN_WIDTH && newWidth <= SIDEBAR_MAX_WIDTH) {
         setSidebarWidth(newWidth)
-        localStorage.setItem(SIDEBAR_WIDTH_KEY, newWidth.toString())
+        sidebarWidthRef.current = newWidth
       }
     }
 
     const handleMouseUp = () => {
       setIsResizing(false)
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, sidebarWidthRef.current.toString())
     }
 
     document.addEventListener('mousemove', handleMouseMove)
@@ -309,10 +380,12 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
           }
 
           // 自动滚动到底部
-          if (messagesContainerRef.current) {
+          if (isAtBottomRef.current && messagesContainerRef.current) {
             requestAnimationFrame(() => {
               scrollToBottom()
             })
+          } else {
+            setHasNewMessages(true)
           }
         }
       }
@@ -321,10 +394,10 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
     }
   }
 
-  const stats = computeStats(entries)
-  const headerEntry = entries.find(e => e.type === 'session')
+  const stats = useMemo(() => computeStats(entries), [entries])
+  const headerEntry = useMemo(() => entries.find(e => e.type === 'session'), [entries])
 
-  const renderEntry = (entry: SessionEntry) => {
+  const renderEntry = useCallback((entry: SessionEntry) => {
     switch (entry.type) {
       case 'message':
         if (!entry.message) return null
@@ -395,9 +468,9 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
       default:
         return null
     }
-  }
+  }, [entries, searchQuery])
 
-  const messageEntries = entries.filter(e => e.type === 'message')
+  const messageEntries = useMemo(() => entries.filter(e => e.type === 'message'), [entries])
 
   const handleTreeNodeClick = useCallback((_leafId: string, targetId: string) => {
     setActiveEntryId(targetId)
@@ -464,7 +537,7 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
         </>
       )}
 
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
         <div className="flex items-center justify-between px-4 py-2 border-b border-[#2c2d3b]">
           <div className="flex items-center gap-2 min-w-0">
             <button
@@ -538,20 +611,57 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
             </div>
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto session-viewer" ref={messagesContainerRef}>
-            <SessionHeader
-              sessionId={headerEntry?.id || session.id}
-              timestamp={headerEntry?.timestamp}
-              stats={stats}
-            />
+          <div className="flex-1 relative min-h-0 overflow-hidden">
+            {!isAtBottom && hasNewMessages && (
+              <button
+                onClick={() => {
+                  scrollToBottom()
+                  setHasNewMessages(false)
+                }}
+                className="absolute bottom-4 right-4 z-10 flex items-center gap-1 rounded-full bg-[#2c2d3b] hover:bg-[#3c3d4b] text-xs text-white px-3 py-2 shadow-lg transition-colors"
+                title={t('session.scrollToBottom', '滚动到底部')}
+              >
+                <ArrowDown className="h-3.5 w-3.5" />
+                {t('session.newMessages', '有新消息')}
+              </button>
+            )}
+            <div className="h-full overflow-y-auto session-viewer" ref={messagesContainerRef}>
+              <SessionHeader
+                sessionId={headerEntry?.id || session.id}
+                timestamp={headerEntry?.timestamp}
+                stats={stats}
+              />
             <div className="messages">
-              {entries.length > 0 ? (
-                entries.map(renderEntry)
+              {renderableEntries.length > 0 ? (
+                <div
+                  className="relative w-full"
+                  style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+                >
+                  {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                    const entry = renderableEntries[virtualRow.index]
+                    if (!entry) return null
+                    return (
+                      <div
+                        key={entry.id}
+                        data-index={virtualRow.index}
+                        ref={rowVirtualizer.measureElement}
+                        className="absolute left-0 top-0 w-full"
+                        style={{
+                          transform: `translateY(${virtualRow.start}px)`,
+                          paddingBottom: virtualRow.index === renderableEntries.length - 1 ? 0 : MESSAGE_ITEM_GAP
+                        }}
+                      >
+                        {renderEntry(entry)}
+                      </div>
+                    )
+                  })}
+                </div>
               ) : (
                 <div className="empty-state">{t('session.noMessages')}</div>
               )}
             </div>
           </div>
+        </div>
         )}
       </div>
     </div>

@@ -1,6 +1,8 @@
+import type { RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import type { SessionInfo } from '../types'
-import { MessageSquare, FileText, Trash2, Loader2, Search, FolderOpen, Clock, User, Bot } from 'lucide-react'
+import { MessageSquare, Trash2, Loader2, Search, FolderOpen, User, Bot } from 'lucide-react'
 import OpenInBrowserButton from './OpenInBrowserButton'
 import OpenInTerminalButton from './OpenInTerminalButton'
 import { SessionBadge } from './SessionBadge'
@@ -16,6 +18,7 @@ interface SessionListProps {
   terminal?: 'iterm2' | 'terminal' | 'vscode' | 'custom'
   piPath?: string
   customCommand?: string
+  scrollParentRef?: RefObject<HTMLDivElement>
 }
 
 export default function SessionList({
@@ -28,8 +31,15 @@ export default function SessionList({
   terminal = 'iterm2',
   piPath,
   customCommand,
+  scrollParentRef,
 }: SessionListProps) {
   const { t } = useTranslation()
+  const rowVirtualizer = useVirtualizer({
+    count: sessions.length,
+    getScrollElement: () => scrollParentRef?.current ?? null,
+    estimateSize: () => 96,
+    overscan: 8,
+  })
 
   if (loading) {
     return (
@@ -49,125 +59,131 @@ export default function SessionList({
     )
   }
 
+  const virtualItems = rowVirtualizer.getVirtualItems()
+
   return (
-    <div className="divide-y divide-border/20">
-      {sessions.map((session) => (
-        <div
-          key={session.id}
-          onClick={() => onSelectSession(session)}
-          className={`px-4 py-3.5 cursor-pointer transition-all duration-200 group relative ${
-            selectedSession?.id === session.id 
-              ? 'bg-accent/80 border-l-2 border-primary' 
-              : 'hover:bg-accent/50 border-l-2 border-transparent'
-          }`}
-        >
-          {/* 卡片式布局 */}
-          <div className="flex items-start gap-3">
-            {/* 图标 */}
-            <div className={`p-2 rounded-lg transition-colors ${
-              selectedSession?.id === session.id 
-                ? 'bg-primary/10 text-primary' 
-                : 'bg-muted/50 text-muted-foreground group-hover:bg-primary/5 group-hover:text-primary/70'
-            }`}>
-              <MessageSquare className="h-4 w-4" />
+    <div className="relative">
+      <div
+        className="relative w-full"
+        style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+      >
+        {virtualItems.map((virtualRow) => {
+          const session = sessions[virtualRow.index]
+          if (!session) return null
+
+          const createdLabel = formatShortTime(session.created)
+          const updatedLabel = formatShortTime(session.modified)
+          const hoverTitle = [
+            session.name || session.first_message || t('session.list.untitled'),
+            `路径: ${session.path}`,
+            `创建: ${new Date(session.created).toLocaleString()}`,
+            `更新: ${new Date(session.modified).toLocaleString()}`,
+            `消息: ${session.message_count}`,
+          ].join('\n')
+
+          return (
+            <div
+              key={session.id}
+              data-index={virtualRow.index}
+              ref={rowVirtualizer.measureElement}
+              onClick={() => onSelectSession(session)}
+              title={hoverTitle}
+              className={`px-3 py-3 cursor-pointer transition-colors group border-b border-border/20 ${
+                selectedSession?.id === session.id ? 'bg-[#262738]' : 'hover:bg-[#222334]'
+              }`}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${virtualRow.start}px)`,
+              }}
+            >
+              <div className="flex items-start gap-3">
+                <div className="h-9 w-9 rounded-lg bg-[#1f2130] border border-border/40 flex items-center justify-center flex-shrink-0">
+                  <MessageSquare className="h-4 w-4 text-blue-400" />
+                </div>
+
+                <div className="flex-1 min-w-0 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <h3 className="font-semibold text-sm leading-tight line-clamp-2 flex-1">
+                        {session.name || session.first_message || t('session.list.untitled')}
+                      </h3>
+                      {getBadgeType && getBadgeType(session.id) && (
+                        <SessionBadge type={getBadgeType(session.id)!} />
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                      <OpenInTerminalButton
+                        session={session}
+                        terminal={terminal}
+                        piPath={piPath}
+                        customCommand={customCommand}
+                        size="sm"
+                        variant="ghost"
+                        onError={(error) => console.error('Failed to open in terminal:', error)}
+                      />
+                      <OpenInBrowserButton
+                        session={session}
+                        size="sm"
+                        variant="ghost"
+                        onError={(error) => console.error('Failed to open in browser:', error)}
+                      />
+                      {onDeleteSession && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onDeleteSession(session)
+                          }}
+                          className="p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-md transition-all"
+                          title={t('common.deleteSession')}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {session.last_message ? (
+                    <div className="flex items-start gap-2">
+                      {session.last_message_role === 'user' ? (
+                        <User className="h-3 w-3 text-blue-500 flex-shrink-0 mt-0.5" />
+                      ) : (
+                        <Bot className="h-3 w-3 text-green-500 flex-shrink-0 mt-0.5" />
+                      )}
+                      <p className="text-xs text-muted-foreground/80 line-clamp-2 leading-relaxed">
+                        {session.last_message}
+                      </p>
+                    </div>
+                  ) : session.first_message && !session.name ? (
+                    <p className="text-xs text-muted-foreground/80 line-clamp-2 leading-relaxed">
+                      {session.first_message}
+                    </p>
+                  ) : null}
+
+                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
+                    <FolderOpen className="h-3 w-3 flex-shrink-0" />
+                    <span className="truncate font-mono">
+                      {formatDirectory(session.cwd) || t('session.list.unknownDirectory')}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground/80 tabular-nums flex-wrap">
+                    <span className="px-2 py-0.5 rounded-md bg-[#222334] border border-border/30">
+                      {session.message_count} {t('session.list.messages')}
+                    </span>
+                    <span className="text-border/60">·</span>
+                    <span>{t('common.created', '创建')} {createdLabel}</span>
+                    <span className="text-border/60">·</span>
+                    <span>{t('common.updated', '更新')} {updatedLabel}</span>
+                  </div>
+                </div>
+              </div>
             </div>
-
-            {/* 内容区域 */}
-            <div className="flex-1 min-w-0 space-y-2">
-              {/* 标题行 */}
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <h3 className="font-semibold text-sm leading-tight line-clamp-2 flex-1">
-                    {session.name || session.first_message || t('session.list.untitled')}
-                  </h3>
-                  {/* Badge */}
-                  {getBadgeType && getBadgeType(session.id) && (
-                    <SessionBadge type={getBadgeType(session.id)!} />
-                  )}
-                </div>
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                  {/* 在终端中打开按钮 */}
-                  <OpenInTerminalButton
-                    session={session}
-                    terminal={terminal}
-                    piPath={piPath}
-                    customCommand={customCommand}
-                    size="sm"
-                    variant="ghost"
-                    onError={(error) => console.error('Failed to open in terminal:', error)}
-                  />
-                  {/* 在浏览器中打开按钮 */}
-                  <OpenInBrowserButton
-                    session={session}
-                    size="sm"
-                    variant="ghost"
-                    onError={(error) => console.error('Failed to open in browser:', error)}
-                  />
-                  {onDeleteSession && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onDeleteSession(session)
-                      }}
-                      className="p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-md transition-all"
-                      title={t('common.deleteSession')}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* 消息预览 - 优先显示最后一条消息 */}
-              {session.last_message ? (
-                <div className="flex items-start gap-2">
-                  {session.last_message_role === 'user' ? (
-                    <User className="h-3 w-3 text-blue-500 flex-shrink-0 mt-0.5" />
-                  ) : (
-                    <Bot className="h-3 w-3 text-green-500 flex-shrink-0 mt-0.5" />
-                  )}
-                  <p className="text-xs text-muted-foreground/80 line-clamp-2 leading-relaxed">
-                    {session.last_message}
-                  </p>
-                </div>
-              ) : session.first_message && !session.name ? (
-                <p className="text-xs text-muted-foreground/80 line-clamp-2 leading-relaxed">
-                  {session.first_message}
-                </p>
-              ) : null}
-
-              {/* 目录信息 */}
-              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
-                <FolderOpen className="h-3 w-3 flex-shrink-0" />
-                <span className="truncate font-mono">
-                  {formatDirectory(session.cwd) || t('session.list.unknownDirectory')}
-                </span>
-              </div>
-
-              {/* 元信息行 */}
-              <div className="flex items-center gap-3 text-[11px]">
-                <span className={`flex items-center gap-1.5 ${
-                  selectedSession?.id === session.id 
-                    ? 'text-primary/80' 
-                    : 'text-muted-foreground/70'
-                }`}>
-                  <Clock className="h-3 w-3" />
-                  {formatShortTime(session.modified)}
-                </span>
-                <span className="text-border/50">•</span>
-                <span className={`flex items-center gap-1.5 ${
-                  selectedSession?.id === session.id 
-                    ? 'text-primary/80' 
-                    : 'text-muted-foreground/70'
-                }`}>
-                  <FileText className="h-3 w-3" />
-                  {session.message_count} {t('session.list.messages')}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      ))}
+          )
+        })}
+      </div>
     </div>
   )
 }

@@ -1,7 +1,9 @@
+import type { RefObject } from 'react'
 import type { SessionInfo } from '../types'
 import { FolderOpen, Loader2, ArrowLeft } from 'lucide-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import OpenInTerminalButton from './OpenInTerminalButton'
 import { SessionBadge } from './SessionBadge'
 
@@ -16,6 +18,7 @@ interface ProjectListProps {
   piPath?: string
   customCommand?: string
   getBadgeType?: (sessionId: string) => 'new' | 'updated' | null
+  scrollParentRef?: RefObject<HTMLDivElement>
 }
 
 interface Project {
@@ -37,6 +40,7 @@ export default function ProjectList({
   piPath,
   customCommand,
   getBadgeType,
+  scrollParentRef,
 }: ProjectListProps) {
   const { t } = useTranslation()
   // Use external selectedProject if provided, otherwise use internal state
@@ -44,24 +48,28 @@ export default function ProjectList({
   const selectedProject = externalSelectedProject !== undefined ? externalSelectedProject : internalSelectedProject
   const setSelectedProject = onSelectProject || setInternalSelectedProject
 
-  const projectMap = sessions.reduce((acc, session) => {
-    const cwd = session.cwd || t('common.unknown')
-    if (!acc[cwd]) {
-      acc[cwd] = []
-    }
-    acc[cwd].push(session)
-    return acc
-  }, {} as Record<string, SessionInfo[]>)
+  const projectMap = useMemo(() => {
+    return sessions.reduce((acc, session) => {
+      const cwd = session.cwd || t('common.unknown')
+      if (!acc[cwd]) {
+        acc[cwd] = []
+      }
+      acc[cwd].push(session)
+      return acc
+    }, {} as Record<string, SessionInfo[]>)
+  }, [sessions, t])
 
-  const projects: Project[] = Object.entries(projectMap).map(([dir, dirSessions]) => ({
-    dir,
-    dirName: getDirectoryName(dir),
-    sessionCount: dirSessions.length,
-    messageCount: dirSessions.reduce((sum, s) => sum + s.message_count, 0),
-    lastModified: Math.max(...dirSessions.map(s => new Date(s.modified).getTime())),
-  }))
-
-  projects.sort((a, b) => b.lastModified - a.lastModified)
+  const projects: Project[] = useMemo(() => {
+    const list = Object.entries(projectMap).map(([dir, dirSessions]) => ({
+      dir,
+      dirName: getDirectoryName(dir),
+      sessionCount: dirSessions.length,
+      messageCount: dirSessions.reduce((sum, s) => sum + s.message_count, 0),
+      lastModified: Math.max(...dirSessions.map(s => new Date(s.modified).getTime())),
+    }))
+    list.sort((a, b) => b.lastModified - a.lastModified)
+    return list
+  }, [projectMap])
 
   const handleBackToProjects = () => {
     setSelectedProject(null)
@@ -70,6 +78,23 @@ export default function ProjectList({
   const handleSelectProject = (dir: string) => {
     setSelectedProject(dir)
   }
+
+  const projectSessions = selectedProject ? (projectMap[selectedProject] || []) : []
+  const projectInfo = selectedProject ? projects.find(p => p.dir === selectedProject) : null
+
+  const projectsVirtualizer = useVirtualizer({
+    count: selectedProject ? 0 : projects.length,
+    getScrollElement: () => scrollParentRef?.current ?? null,
+    estimateSize: () => 56,
+    overscan: 8,
+  })
+
+  const sessionsVirtualizer = useVirtualizer({
+    count: selectedProject ? projectSessions.length : 0,
+    getScrollElement: () => scrollParentRef?.current ?? null,
+    estimateSize: () => 44,
+    overscan: 8,
+  })
 
   if (!selectedProject) {
     if (loading) {
@@ -90,36 +115,64 @@ export default function ProjectList({
       )
     }
 
+    const virtualItems = projectsVirtualizer.getVirtualItems()
+
     return (
       <div>
         <div className="px-3 py-2 text-xs text-muted-foreground border-b border-border/30">
           {t('project.list.count', { count: projects.length })}
         </div>
-        {projects.map((project) => (
-          <div
-            key={project.dir}
-            onClick={() => handleSelectProject(project.dir)}
-            className="px-3 py-2.5 hover:bg-accent cursor-pointer transition-colors border-b border-border/30"
-          >
-            <div className="flex items-center gap-2.5">
-              <FolderOpen className="h-4 w-4 text-blue-400 flex-shrink-0" />
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium truncate leading-tight">{project.dirName}</div>
-                <div className="flex items-center gap-2 mt-0.5 text-[11px] text-muted-foreground">
-                  <span>{project.sessionCount} {t('project.list.sessions')}</span>
-                  <span className="text-border">·</span>
-                  <span>{project.messageCount} {t('session.list.messages')}</span>
+        <div
+          className="relative w-full"
+          style={{ height: `${projectsVirtualizer.getTotalSize()}px` }}
+        >
+          {virtualItems.map((virtualRow) => {
+            const project = projects[virtualRow.index]
+            if (!project) return null
+            return (
+              <div
+                key={project.dir}
+                data-index={virtualRow.index}
+                ref={projectsVirtualizer.measureElement}
+                onClick={() => handleSelectProject(project.dir)}
+                className="px-3 py-3 hover:bg-[#262738] cursor-pointer transition-colors border-b border-border/20"
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="h-10 w-10 rounded-lg bg-[#1f2130] border border-border/40 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <FolderOpen className="h-4 w-4 text-blue-400" />
+                  </div>
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <div>
+                      <div className="text-sm font-semibold truncate leading-tight">{project.dirName}</div>
+                      <div className="text-[11px] text-muted-foreground/80 truncate">{project.dir}</div>
+                    </div>
+                    <div className="flex items-center gap-2 text-[11px] text-muted-foreground tabular-nums flex-wrap">
+                      <span className="px-2 py-0.5 rounded-md bg-[#222334] border border-border/30">
+                        {project.sessionCount} {t('project.list.sessions')}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-md bg-[#222334] border border-border/30">
+                        {project.messageCount} {t('session.list.messages')}
+                      </span>
+                      <span className="px-2 py-0.5 rounded-md bg-[#222334] border border-border/30">
+                        {t('common.updated', '更新')} {formatShortTime(new Date(project.lastModified).toISOString())}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
-          </div>
-        ))}
+            )
+          })}
+        </div>
       </div>
     )
   }
-
-  const projectSessions = projectMap[selectedProject] || []
-  const projectInfo = projects.find(p => p.dir === selectedProject)
 
   return (
     <div>
@@ -139,44 +192,74 @@ export default function ProjectList({
         </div>
       </div>
 
-      <div className="divide-y divide-border/30">
-        {projectSessions.map((session) => (
-          <div
-            key={session.id}
-            onClick={() => onSelectSession(session)}
-            className={`px-3 py-2 cursor-pointer hover:bg-accent transition-colors group ${
-              selectedSession?.id === session.id ? 'bg-accent' : ''
-            }`}
-          >
-            <div className="flex items-center gap-2.5">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <div className="text-sm truncate leading-tight flex-1">
-                    {session.name || session.first_message || t('session.list.untitled')}
+      <div
+        className="relative w-full"
+        style={{ height: `${sessionsVirtualizer.getTotalSize()}px` }}
+      >
+        {sessionsVirtualizer.getVirtualItems().map((virtualRow) => {
+          const session = projectSessions[virtualRow.index]
+          if (!session) return null
+          const hoverTitle = [
+            session.name || session.first_message || t('session.list.untitled'),
+            `路径: ${session.path}`,
+            `创建: ${new Date(session.created).toLocaleString()}`,
+            `更新: ${new Date(session.modified).toLocaleString()}`,
+            `消息: ${session.message_count}`,
+          ].join('\n')
+          return (
+            <div
+              key={session.id}
+              data-index={virtualRow.index}
+              ref={sessionsVirtualizer.measureElement}
+              onClick={() => onSelectSession(session)}
+              title={hoverTitle}
+              className={`px-3 py-2.5 cursor-pointer transition-colors group border-b border-border/20 ${
+                selectedSession?.id === session.id ? 'bg-[#262738]' : 'hover:bg-[#222334]'
+              }`}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${virtualRow.start}px)`,
+              }}
+            >
+              <div className="flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <div className="text-sm font-medium truncate leading-tight flex-1">
+                        {session.name || session.first_message || t('session.list.untitled')}
+                      </div>
+                      {getBadgeType && getBadgeType(session.id) && (
+                        <SessionBadge type={getBadgeType(session.id)!} />
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground/80 tabular-nums">
+                      <span>{t('common.created', '创建')} {formatShortTime(session.created)}</span>
+                      <span className="text-border/60">·</span>
+                      <span>{t('common.updated', '更新')} {formatShortTime(session.modified)}</span>
+                    </div>
                   </div>
-                  {/* Badge */}
-                  {getBadgeType && getBadgeType(session.id) && (
-                    <SessionBadge type={getBadgeType(session.id)!} />
-                  )}
                 </div>
-                <div className="flex items-center gap-2 mt-0.5 text-[11px] text-muted-foreground">
-                  <span>{formatShortTime(session.modified)}</span>
-                  <span className="text-border">·</span>
-                  <span>{session.message_count}</span>
+                <div className="flex items-center gap-2 text-[11px] text-muted-foreground tabular-nums flex-shrink-0">
+                  <span className="px-2 py-0.5 rounded-md bg-[#222334] border border-border/30 text-right">
+                    {session.message_count} {t('session.list.messages')}
+                  </span>
+                  <OpenInTerminalButton
+                    session={session}
+                    terminal={terminal}
+                    piPath={piPath}
+                    customCommand={customCommand}
+                    size="sm"
+                    variant="ghost"
+                    onError={(error) => console.error('Failed to open in terminal:', error)}
+                  />
                 </div>
               </div>
-              <OpenInTerminalButton
-                session={session}
-                terminal={terminal}
-                piPath={piPath}
-                customCommand={customCommand}
-                size="sm"
-                variant="ghost"
-                onError={(error) => console.error('Failed to open in terminal:', error)}
-              />
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )

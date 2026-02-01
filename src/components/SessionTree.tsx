@@ -6,7 +6,7 @@ interface SessionTreeProps {
   entries: SessionEntry[]
   activeLeafId?: string
   onNodeClick?: (leafId: string, targetId: string) => void
-  filter?: 'default' | 'no-tools' | 'user-only' | 'labeled-only' | 'all'
+  filter?: 'default' | 'no-tools' | 'user-only' | 'labeled-only' | 'all' | 'read-tools' | 'edit-tools'
 }
 
 interface TreeNodeData {
@@ -280,6 +280,20 @@ export default function SessionTree({
         case 'all':
           return true
 
+        case 'read-tools':
+          if (entry.type === 'message' && entry.message?.role === 'assistant') {
+            const content = Array.isArray(entry.message.content) ? entry.message.content : []
+            return content.some((c: any) => c.type === 'toolCall' && c.name === 'read')
+          }
+          return false
+
+        case 'edit-tools':
+          if (entry.type === 'message' && entry.message?.role === 'assistant') {
+            const content = Array.isArray(entry.message.content) ? entry.message.content : []
+            return content.some((c: any) => c.type === 'toolCall' && c.name === 'edit')
+          }
+          return false
+
         default:
           return true
       }
@@ -454,6 +468,18 @@ export default function SessionTree({
           onClick={() => setCurrentFilter('all')}
         >
           All
+        </button>
+        <button
+          className={`filter-btn ${currentFilter === 'read-tools' ? 'active' : ''}`}
+          onClick={() => setCurrentFilter('read-tools')}
+        >
+          Read
+        </button>
+        <button
+          className={`filter-btn ${currentFilter === 'edit-tools' ? 'active' : ''}`}
+          onClick={() => setCurrentFilter('edit-tools')}
+        >
+          Edit
         </button>
       </div>
 
