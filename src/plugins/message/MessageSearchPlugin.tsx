@@ -26,9 +26,6 @@ export class MessageSearchPlugin extends BaseSearchPlugin {
     query: string,
     context: SearchContext
   ): Promise<SearchPluginResult[]> {
-    console.log('[MessageSearchPlugin] Starting FTS5 search for:', query)
-    console.log('[MessageSearchPlugin] Search current project only:', context.searchCurrentProjectOnly)
-    
     try {
       // 使用 SQLite FTS5 搜索，快速且高效
       const sessions = await invoke<SessionInfo[]>('search_sessions_fts', {
@@ -36,14 +33,10 @@ export class MessageSearchPlugin extends BaseSearchPlugin {
         limit: 50 // 最多返回 50 个会话
       })
       
-      console.log('[MessageSearchPlugin] FTS5 returned sessions:', sessions.length)
-      
       // 如果启用了"只搜索当前项目"，过滤结果
       const filteredSessions = context.searchCurrentProjectOnly && context.selectedProject
         ? sessions.filter(s => s.cwd === context.selectedProject)
         : sessions
-      
-      console.log('[MessageSearchPlugin] After project filter:', filteredSessions.length)
       
       // 转换为插件结果格式
       const pluginResults = filteredSessions.map(session => {
@@ -69,7 +62,6 @@ export class MessageSearchPlugin extends BaseSearchPlugin {
         }
       }).slice(0, 20) // 最多显示 20 条结果
       
-      console.log('[MessageSearchPlugin] Returning plugin results:', pluginResults.length)
       return pluginResults
     } catch (error) {
       console.error('[MessageSearchPlugin] FTS5 search failed:', error)

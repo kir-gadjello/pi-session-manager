@@ -18,8 +18,6 @@ export class ProjectSearchPlugin extends BaseSearchPlugin {
     query: string,
     context: SearchContext
   ): Promise<SearchPluginResult[]> {
-    console.log('[ProjectSearchPlugin] Starting search for:', query)
-    
     try {
       // 从 sessions 中提取项目列表
       const projectMap = new Map<string, number>()
@@ -28,8 +26,6 @@ export class ProjectSearchPlugin extends BaseSearchPlugin {
         const project = session.cwd
         projectMap.set(project, (projectMap.get(project) || 0) + 1)
       })
-      
-      console.log('[ProjectSearchPlugin] Found projects:', projectMap.size)
       
       // 搜索匹配的项目
       const results: SearchPluginResult[] = []
@@ -66,7 +62,6 @@ export class ProjectSearchPlugin extends BaseSearchPlugin {
       }
       
       const finalResults = results.sort((a, b) => b.score - a.score).slice(0, 10)
-      console.log('[ProjectSearchPlugin] Returning results:', finalResults.length)
       return finalResults
     } catch (error) {
       console.error('[ProjectSearchPlugin] Search failed:', error)

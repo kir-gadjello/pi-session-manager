@@ -87,39 +87,6 @@ export default function ToolCallList({ toolCalls, entries = [] }: ToolCallListPr
             )
 
           case 'edit':
-            // Debug: 打印 edit 工具的数据结构
-            console.log('Edit tool data:', {
-              toolCallId,
-              hasResult: !!result,
-              hasDiff: !!diff,
-              diffType: typeof diff,
-              diffLength: diff?.length,
-              toolResultContent,
-              resultMessage: result?.message,
-              resultContent: result?.message?.content,
-              // 检查是否有 oldText 和 newText
-              hasOldText: !!toolResultContent?.oldText,
-              hasNewText: !!toolResultContent?.newText,
-              detailsKeys: result?.message?.details ? Object.keys(result.message.details) : []
-            })
-            
-            // 输出完整的 diff 内容
-            if (diff) {
-              console.log('=== FULL DIFF CONTENT ===')
-              console.log(diff)
-              console.log('=== END DIFF ===')
-              // 保存到全局变量以便在控制台中查看
-              ;(window as any).lastEditDiff = diff
-            }
-
-            // 输出完整的 details
-            if (result?.message?.details) {
-              console.log('=== FULL DETAILS ===')
-              console.log(result.message.details)
-              console.log('=== END DETAILS ===')
-              ;(window as any).lastEditDetails = result.message.details
-            }
-            
             return (
               <EditExecution
                 key={index}

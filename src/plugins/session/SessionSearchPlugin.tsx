@@ -18,9 +18,6 @@ export class SessionSearchPlugin extends BaseSearchPlugin {
     query: string,
     context: SearchContext
   ): Promise<SearchPluginResult[]> {
-    console.log('[SessionSearchPlugin] Starting search for:', query)
-    console.log('[SessionSearchPlugin] Search current project only:', context.searchCurrentProjectOnly)
-    
     try {
       const results: SearchPluginResult[] = []
       
@@ -28,8 +25,6 @@ export class SessionSearchPlugin extends BaseSearchPlugin {
       const sessionsToSearch = context.searchCurrentProjectOnly && context.selectedProject
         ? context.sessions.filter(s => s.cwd === context.selectedProject)
         : context.sessions
-      
-      console.log('[SessionSearchPlugin] Searching in sessions:', sessionsToSearch.length)
       
       for (const session of sessionsToSearch) {
         // 搜索会话名称
@@ -70,7 +65,6 @@ export class SessionSearchPlugin extends BaseSearchPlugin {
       }
       
       const finalResults = results.sort((a, b) => b.score - a.score).slice(0, 20)
-      console.log('[SessionSearchPlugin] Returning results:', finalResults.length)
       return finalResults
     } catch (error) {
       console.error('[SessionSearchPlugin] Search failed:', error)
