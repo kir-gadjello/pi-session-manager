@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { escapeHtml, getLanguageFromPath } from '../utils/markdown'
-import { shortenPath } from '../utils/format'
+import { shortenPath, formatDate } from '../utils/format'
 import CodeBlock from './CodeBlock'
 import HoverPreview from './HoverPreview'
 
@@ -32,7 +32,7 @@ export default function WriteExecution({
 
   return (
     <div className="tool-execution success">
-      {timestamp && <div className="message-timestamp">{timestamp}</div>}
+      {timestamp && <div className="message-timestamp">{formatDate(timestamp)}</div>}
       <div className="tool-header">
         <span className="tool-name">
           <svg className="tool-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
