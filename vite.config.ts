@@ -10,5 +10,15 @@ export default defineConfig(async () => ({
     watch: {
       ignored: ['**/src-tauri/**'],
     },
+    hmr: {
+      overlay: false,
+    },
+  },
+  logLevel: 'silent',
+  customLogger: {
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    ready: () => {},
   },
 }))
