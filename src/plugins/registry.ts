@@ -16,11 +16,9 @@ export class PluginRegistry {
     if (this.plugins.has(plugin.id)) {
       throw new Error(`Plugin with id "${plugin.id}" already registered`)
     }
-    
+
     this.plugins.set(plugin.id, plugin)
     plugin.onMount?.()
-    
-    console.log(`[PluginRegistry] Registered plugin: ${plugin.id}`)
   }
   
   /**
@@ -32,7 +30,6 @@ export class PluginRegistry {
     if (plugin) {
       plugin.onUnmount?.()
       this.plugins.delete(pluginId)
-      console.log(`[PluginRegistry] Unregistered plugin: ${pluginId}`)
     }
   }
   

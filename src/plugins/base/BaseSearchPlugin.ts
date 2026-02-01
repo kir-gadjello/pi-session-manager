@@ -25,7 +25,7 @@ export abstract class BaseSearchPlugin implements SearchPlugin {
    * 默认选中处理（可覆盖）
    */
   onSelect(_result: SearchPluginResult, _context: SearchContext): void {
-    console.log(`[${this.id}] Selected:`, _result)
+    // Default: do nothing, subclasses should override
   }
   
   /**
