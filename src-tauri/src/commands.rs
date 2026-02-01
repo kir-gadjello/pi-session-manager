@@ -19,6 +19,57 @@ pub async fn read_session_file(path: String) -> Result<String, String> {
         .map_err(|e| format!("Failed to read session file: {}", e))
 }
 
+/// 增量读取会话文件的新增内容
+/// `from_line`: 从哪一行开始读取（0 表示从第一行开始）
+/// 返回: (行数, 新增内容)
+#[tauri::command]
+pub async fn read_session_file_incremental(path: String, from_line: usize) -> Result<(usize, String), String> {
+    let content = fs::read_to_string(&path)
+        .map_err(|e| format!("Failed to read session file: {}", e))?;
+
+    let lines: Vec<&str> = content.lines().collect();
+    let total_lines = lines.len();
+
+    if from_line >= total_lines {
+        // 没有新内容
+        return Ok((total_lines, String::new()));
+    }
+
+    // 提取新增的行
+    let new_lines: Vec<&str> = lines[from_line..].to_vec();
+    let new_content = new_lines.join("\n");
+
+    Ok((total_lines, new_content))
+}
+
+/// 获取文件统计信息
+#[tauri::command]
+pub async fn get_file_stats(path: String) -> Result<FileStats, String> {
+    let metadata = fs::metadata(&path)
+        .map_err(|e| format!("Failed to get file metadata: {}", e))?;
+
+    let modified = metadata.modified()
+        .map_err(|e| format!("Failed to get modified time: {}", e))?;
+
+    let modified_at = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("Failed to convert modified time: {}", e))?
+        .as_millis() as u64;
+
+    Ok(FileStats {
+        size: metadata.len(),
+        modified_at: modified_at,
+        is_file: metadata.is_file(),
+    })
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct FileStats {
+    pub size: u64,
+    pub modified_at: u64,
+    pub is_file: bool,
+}
+
 #[tauri::command]
 pub async fn get_session_entries(path: String) -> Result<Vec<SessionEntry>, String> {
     let content = fs::read_to_string(&path)

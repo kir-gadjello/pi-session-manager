@@ -21,6 +21,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan_sessions,
             read_session_file,
+            read_session_file_incremental,
+            get_file_stats,
             get_session_entries,
             search_sessions,
             search_sessions_fts,

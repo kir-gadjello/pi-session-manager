@@ -50,6 +50,10 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
   const startXRef = useRef(0)
   const startWidthRef = useRef(0)
 
+  // 增量更新状态
+  const [lineCount, setLineCount] = useState(0)
+  const lastModifiedTimeRef = useRef(0)
+
   // 搜索状态
   const [showSearch, setShowSearch] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -83,6 +87,37 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
   useEffect(() => {
     loadSession()
   }, [session])
+
+  // 监听会话文件变化，增量更新
+  useEffect(() => {
+    if (!session.path || loading) return
+
+    let checkInterval: NodeJS.Timeout
+
+    const checkFileChanges = async () => {
+      try {
+        // 获取文件修改时间
+        const stats = await invoke<any>('get_file_stats', { path: session.path })
+        const currentModified = stats.modifiedAt || stats.modified || 0
+
+        // 如果文件被修改了，执行增量更新
+        if (currentModified > lastModifiedTimeRef.current) {
+          console.log(`[SessionViewer] File modified: ${session.path}`)
+          lastModifiedTimeRef.current = currentModified
+          await loadIncremental()
+        }
+      } catch (err) {
+        console.error('Failed to check file changes:', err)
+      }
+    }
+
+    // 每 1 秒检查一次文件变化
+    checkInterval = setInterval(checkFileChanges, 1000)
+
+    return () => {
+      clearInterval(checkInterval)
+    }
+  }, [session.path, lineCount, loading])
 
   // 快捷键监听：cmd+f / ctrl+f 打开搜索
   useEffect(() => {
@@ -225,6 +260,10 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
 
       const jsonlContent = await invoke<string>('read_session_file', { path: session.path })
 
+      // 计算行数
+      const lineCount = jsonlContent.split('\n').filter(line => line.trim()).length
+      setLineCount(lineCount)
+
       const parsedEntries = parseSessionEntries(jsonlContent)
       setEntries(parsedEntries)
 
@@ -237,6 +276,48 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
       setError(err instanceof Error ? err.message : t('session.loadError'))
     } finally {
       setLoading(false)
+    }
+  }
+
+  // 增量加载新内容
+  const loadIncremental = async () => {
+    try {
+      const result = await invoke<[number, string]>('read_session_file_incremental', {
+        path: session.path,
+        fromLine: lineCount
+      })
+
+      const [newLineCount, newContent] = result
+
+      if (newContent.trim()) {
+        // 解析新增的 entries
+        const newEntries = parseSessionEntries(newContent)
+
+        if (newEntries.length > 0) {
+          console.log(`[SessionViewer] Incremental update: ${newEntries.length} new entries`)
+
+          // 追加到现有列表
+          setEntries(prev => [...prev, ...newEntries])
+
+          // 更新行数
+          setLineCount(newLineCount)
+
+          // 更新活动条目
+          const lastMessage = newEntries.filter(e => e.type === 'message').pop()
+          if (lastMessage) {
+            setActiveEntryId(lastMessage.id)
+          }
+
+          // 自动滚动到底部
+          if (messagesContainerRef.current) {
+            requestAnimationFrame(() => {
+              scrollToBottom()
+            })
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load incremental session:', err)
     }
   }
 
