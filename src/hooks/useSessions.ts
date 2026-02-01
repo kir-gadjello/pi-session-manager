@@ -25,11 +25,8 @@ export function useSessions(): UseSessionsReturn {
   }, [selectedSession])
 
   const loadSessions = useCallback(async () => {
-    console.log('[useSessions] loadSessions called')
     try {
-      setLoading(true)
       const result = await invoke<SessionInfo[]>('scan_sessions')
-      console.log('[useSessions] scan_sessions returned', result.length, 'sessions')
       setSessions(result)
 
       const currentSelection = selectedSessionRef.current
@@ -46,12 +43,11 @@ export function useSessions(): UseSessionsReturn {
             matched.modified !== currentSelection.modified
 
           if (!hasChanges) {
-            console.log('[useSessions] No changes detected, keeping current selection stable:', matched.id)
+            // No changes detected, keeping current selection stable
           } else if (pathChanged || nameChanged) {
-            console.log('[useSessions] Updating selected session (path/name changed):', matched.id)
             setSelectedSession(matched)
           } else {
-            console.log('[useSessions] Session metadata changed, updating silently:', matched.id)
+            // Session metadata changed, updating silently
             setSelectedSession(prev => {
               if (!prev) return matched
               return Object.assign(prev, matched)
@@ -60,7 +56,7 @@ export function useSessions(): UseSessionsReturn {
         } else {
           try {
             await invoke('read_session_file', { path: currentSelection.path })
-            console.log('[useSessions] Selected session file still readable but not in scan results, keeping selection:', currentSelection.id)
+            // Selected session file still readable but not in scan results, keeping selection
           } catch (error) {
             console.warn('[useSessions] Selected session file not readable, clearing selection:', error)
             setSelectedSession(null)
@@ -96,7 +92,7 @@ export function useSessions(): UseSessionsReturn {
     try {
       await invoke('rename_session', {
         path: session.path,
-        newName
+        new_name: newName
       })
 
       setSessions(prev => prev.map(s =>

@@ -16,10 +16,7 @@ export function useSearch(
   const [isSearching, setIsSearching] = useState(false)
 
   const handleSearch = useCallback(async (query: string, sessions: SessionInfo[]) => {
-    console.log('[useSearch] handleSearch called with query:', query)
-
     if (!query.trim()) {
-      console.log('[useSearch] Empty query, clearing results only')
       setSearchResults([])
       return
     }
@@ -30,12 +27,11 @@ export function useSearch(
       const results = await invoke<SearchResult[]>('search_sessions', {
         sessions,
         query,
-        searchMode: 'content',
-        roleFilter: 'all',
-        includeTools: false,
+        search_mode: 'content',
+        role_filter: 'all',
+        include_tools: false,
       })
 
-      console.log('[useSearch] Search completed, results count:', results.length)
       setSearchResults(results)
     } catch (error) {
       console.error('[useSearch] Search failed:', error)

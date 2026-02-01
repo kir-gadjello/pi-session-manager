@@ -33,7 +33,7 @@ export function useAppSettings(): UseAppSettingsReturn {
         }
       }
     } catch (error) {
-      console.error('[useAppSettings] Failed to load settings:', error)
+      // Silently fail during initialization
     }
   }, [])
 

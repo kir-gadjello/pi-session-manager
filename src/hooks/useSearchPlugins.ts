@@ -26,12 +26,10 @@ export function useSearchPlugins(context: SearchContext) {
     // 检查缓存
     const cached = cache.get(query)
     if (cached) {
-      console.log('[useSearchPlugins] Cache hit:', query)
       return cached
     }
     
     // 执行搜索
-    console.log('[useSearchPlugins] Searching:', query)
     const results = await pluginRegistry.search(query, contextRef.current)
     
     // 缓存结果

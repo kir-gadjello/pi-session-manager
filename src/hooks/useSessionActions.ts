@@ -17,8 +17,6 @@ export function useSessionActions(): UseSessionActionsReturn {
       return
     }
 
-    console.log('[useSessionActions] Starting export:', { format, sessionPath: session.path })
-
     const extension = format === 'md' ? 'md' : format
     const defaultPath = `${session.name || 'session'}.${extension}`
 
@@ -31,7 +29,6 @@ export function useSessionActions(): UseSessionActionsReturn {
     })
 
     if (!filePath) {
-      console.log('[useSessionActions] User cancelled save dialog')
       return
     }
 
@@ -42,7 +39,6 @@ export function useSessionActions(): UseSessionActionsReturn {
         outputPath: filePath
       })
 
-      console.log('[useSessionActions] Export successful')
       alert(t('app.errors.exportSuccess'))
     } catch (error) {
       console.error('[useSessionActions] Export failed:', error)
