@@ -19,6 +19,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             pi_session_manager::scan_sessions,
             pi_session_manager::read_session_file,
+            pi_session_manager::read_session_file_incremental,
+            pi_session_manager::get_file_stats,
             pi_session_manager::get_session_entries,
             pi_session_manager::search_sessions,
             pi_session_manager::search_sessions_fts,
@@ -37,7 +39,12 @@ fn main() {
             pi_session_manager::save_pi_settings,
             pi_session_manager::list_models,
             pi_session_manager::test_model,
-            pi_session_manager::test_models_batch
+            pi_session_manager::test_models_batch,
+            pi_session_manager::add_favorite,
+            pi_session_manager::remove_favorite,
+            pi_session_manager::get_all_favorites,
+            pi_session_manager::is_favorite,
+            pi_session_manager::toggle_favorite
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
