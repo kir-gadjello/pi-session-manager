@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { save } from '@tauri-apps/plugin-dialog'
 import { useTranslation } from 'react-i18next'
@@ -11,7 +11,6 @@ import SearchPanel from './components/SearchPanel'
 import ExportDialog from './components/ExportDialog'
 import RenameDialog from './components/RenameDialog'
 import Dashboard from './components/Dashboard'
-import LanguageSwitcher from './components/LanguageSwitcher'
 import SettingsPanel from './components/settings/SettingsPanel'
 import { CommandPalette } from './components/command'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
@@ -20,11 +19,13 @@ import { useSessionBadges } from './hooks/useSessionBadges'
 import { registerBuiltinPlugins } from './plugins'
 import type { SessionInfo, SearchResult } from './types'
 import type { SearchContext } from './plugins/types'
+import i18n from './i18n'
 
 function App() {
   const { t } = useTranslation()
   const [sessions, setSessions] = useState<SessionInfo[]>([])
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null)
+  const selectedSessionRef = useRef<SessionInfo | null>(null)
   const [selectedProject, setSelectedProject] = useState<string | null>(null)
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const [isSearching, setIsSearching] = useState(false)
@@ -36,11 +37,16 @@ function App() {
   const [terminal, setTerminal] = useState<'iterm2' | 'terminal' | 'vscode' | 'custom'>('iterm2')
   const [piPath, setPiPath] = useState<string>('pi')
   const [customCommand, setCustomCommand] = useState<string>('')
+  const listScrollRef = useRef<HTMLDivElement>(null)
 
   // 注册内置插件
   useEffect(() => {
     registerBuiltinPlugins()
   }, [])
+
+  useEffect(() => {
+    selectedSessionRef.current = selectedSession
+  }, [selectedSession])
 
   // 加载会话列表
   const loadSessions = useCallback(async () => {
@@ -52,6 +58,19 @@ function App() {
       console.log('[App] scan_sessions returned', result.length, 'sessions')
       setSessions(result)
       console.log('[App] Sessions state updated')
+
+      const currentSelection = selectedSessionRef.current
+      if (currentSelection) {
+        const matched = result.find(s => s.id === currentSelection.id || s.path === currentSelection.path)
+        if (!matched) {
+          try {
+            await invoke('read_session_file', { path: currentSelection.path })
+          } catch (error) {
+            console.warn('[App] Selected session missing on refresh, clearing selection:', error)
+            setSelectedSession(null)
+          }
+        }
+      }
     } catch (error) {
       console.error('[App] Failed to load sessions:', error)
       alert(`${t('app.errors.loadSessions')}: ${error}`)
@@ -61,19 +80,29 @@ function App() {
     }
   }, [t])
 
-  // 加载终端设置
+  // 加载终端设置和语言设置
   const loadSettings = useCallback(async () => {
     try {
+      // 加载 Rust 端设置（终端配置等）
       const settings = await invoke('load_app_settings') as any
       if (settings?.terminal) {
         setTerminal(settings.terminal.default_terminal || 'iterm2')
         setPiPath(settings.terminal.pi_command_path || 'pi')
         setCustomCommand(settings.terminal.custom_terminal_command || '')
       }
+
+      // 加载前端设置（语言等）
+      const frontendSettings = localStorage.getItem('pi-session-manager-settings')
+      if (frontendSettings) {
+        const parsed = JSON.parse(frontendSettings)
+        if (parsed?.language?.locale) {
+          i18n.changeLanguage(parsed.language.locale)
+        }
+      }
     } catch (error) {
       console.error('[App] Failed to load settings:', error)
     }
-  }, [])
+  }, [i18n])
 
   // Keyboard shortcuts
   const shortcuts = useCallback(() => ({
@@ -335,8 +364,6 @@ function App() {
                 </svg>
               </button>
             </div>
-            {/* Language Switcher */}
-            <LanguageSwitcher />
             {/* Dashboard Button */}
             <button
               onClick={() => setSelectedSession(null)}
@@ -365,7 +392,7 @@ function App() {
           resultCount={searchResults.length}
           isSearching={isSearching}
         />
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto" ref={listScrollRef}>
           {viewMode === 'project' ? (
             <ProjectList
               sessions={isSearching ? mapSearchResults(searchResults, sessions) : sessions}
@@ -378,6 +405,7 @@ function App() {
               piPath={piPath}
               customCommand={customCommand}
               getBadgeType={getBadgeType}
+              scrollParentRef={listScrollRef}
             />
           ) : viewMode === 'directory' ? (
             <SessionListByDirectory
@@ -390,6 +418,7 @@ function App() {
               piPath={piPath}
               customCommand={customCommand}
               getBadgeType={getBadgeType}
+              scrollParentRef={listScrollRef}
             />
           ) : (
             <SessionList
@@ -402,6 +431,7 @@ function App() {
               terminal={terminal}
               piPath={piPath}
               customCommand={customCommand}
+              scrollParentRef={listScrollRef}
             />
           )}
         </div>

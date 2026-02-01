@@ -7,12 +7,21 @@ import { Check } from 'lucide-react'
 import type { LanguageSettingsProps } from '../types'
 
 export default function LanguageSettings({ settings, onUpdate }: LanguageSettingsProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
 
   const languages = [
     { code: 'zh-CN', name: '简体中文', flag: '🇨🇳' },
     { code: 'en-US', name: 'English', flag: '🇺🇸' },
   ]
+
+  const handleLanguageChange = (langCode: string) => {
+    // 更新 settings
+    onUpdate('language', 'locale', langCode)
+    // 切换 i18n 语言
+    i18n.changeLanguage(langCode)
+    // 保存到 localStorage
+    localStorage.setItem('app-language', langCode)
+  }
 
   return (
     <div className="space-y-6">
@@ -35,7 +44,7 @@ export default function LanguageSettings({ settings, onUpdate }: LanguageSetting
                 name="language"
                 value={lang.code}
                 checked={settings.language.locale === lang.code}
-                onChange={(e) => onUpdate('language', 'locale', e.target.value)}
+                onChange={(e) => handleLanguageChange(e.target.value)}
                 className="sr-only"
               />
               <span className="text-xl">{lang.flag}</span>

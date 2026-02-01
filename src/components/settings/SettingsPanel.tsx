@@ -51,7 +51,12 @@ export default function SettingsPanel({ isOpen, onClose }: SettingsPanelProps) {
     try {
       const saved = localStorage.getItem('pi-session-manager-settings')
       if (saved) {
-        setSettings({ ...defaultSettings, ...JSON.parse(saved) })
+        const parsedSettings = JSON.parse(saved)
+        setSettings({ ...defaultSettings, ...parsedSettings })
+        // 同步语言到 i18n
+        if (parsedSettings?.language?.locale) {
+          i18n.changeLanguage(parsedSettings.language.locale)
+        }
       }
     } catch (error) {
       console.error('Failed to load settings:', error)
