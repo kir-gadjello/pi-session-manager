@@ -34,7 +34,7 @@ export function useFileWatcher({
 
     const setupListener = async () => {
       try {
-        unlisten = await listen('sessions-changed', (event) => {
+        unlisten = await listen('sessions-changed', (_event) => {
           if (debounceTimerRef.current) {
             clearTimeout(debounceTimerRef.current)
           }
