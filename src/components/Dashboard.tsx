@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
 import { BarChart3, Clock, RefreshCw, Activity, Zap, DollarSign } from 'lucide-react'
-import type { SessionInfo, SessionStats } from '../types'
+import type { SessionInfo, SessionStats, SessionStatsInput } from '../types'
 import StatCard from './dashboard/StatCard'
 import ActivityHeatmap from './dashboard/ActivityHeatmap'
 import MessageDistribution from './dashboard/MessageDistribution'
@@ -28,18 +28,50 @@ export default function Dashboard({ sessions, onSessionSelect, projectName }: Da
   const { t } = useTranslation()
   const [stats, setStats] = useState<SessionStats | null>(null)
   const isLoadingRef = useRef(false)
+  const statsKey = useMemo(() => {
+    const first = sessions[0]
+    const last = sessions[sessions.length - 1]
+    return [
+      projectName ?? 'all',
+      sessions.length,
+      first?.path ?? '',
+      first?.modified ?? '',
+      last?.path ?? '',
+      last?.modified ?? '',
+    ].join('|')
+  }, [projectName, sessions])
 
-  // 只在组件挂载时加载统计，不自动跟随 sessions 变化
+  // sessions 或项目切换时重新加载统计
   useEffect(() => {
+    if (sessions.length === 0) {
+      setStats(null)
+      return
+    }
     loadStats()
-  }, []) // 空依赖数组
+  }, [statsKey])
 
   const loadStats = async () => {
     if (isLoadingRef.current) return
     isLoadingRef.current = true
 
     try {
-      const result = await invoke<SessionStats>('get_session_stats', { sessions })
+      const statsSessions: SessionStatsInput[] = sessions.map((session) => ({
+        path: session.path,
+        cwd: session.cwd,
+        modified: session.modified,
+        message_count: session.message_count,
+      }))
+      let result: SessionStats
+      try {
+        result = await invoke<SessionStats>('get_session_stats_light', { sessions: statsSessions })
+      } catch (error: any) {
+        const message = typeof error === 'string' ? error : error?.message
+        if (message && String(message).includes('get_session_stats_light')) {
+          result = await invoke<SessionStats>('get_session_stats', { sessions })
+        } else {
+          throw error
+        }
+      }
       setStats(result)
     } catch (error) {
       console.error('Failed to load stats:', error)

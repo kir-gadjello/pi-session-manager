@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
 import { X, BarChart3, Calendar, Folder, Clock, Zap, RefreshCw, Download, Settings, Award } from 'lucide-react'
-import type { SessionInfo, SessionStats } from '../types'
+import type { SessionInfo, SessionStats, SessionStatsInput } from '../types'
 import StatCard from './dashboard/StatCard'
 import ActivityHeatmap from './dashboard/ActivityHeatmap'
 import MessageDistribution from './dashboard/MessageDistribution'
@@ -30,6 +30,17 @@ export default function StatsPanel({ sessions, onClose }: StatsPanelProps) {
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<TabType>('overview')
   const isLoadingRef = useRef(false)
+  const statsKey = useMemo(() => {
+    const first = sessions[0]
+    const last = sessions[sessions.length - 1]
+    return [
+      sessions.length,
+      first?.path ?? '',
+      first?.modified ?? '',
+      last?.path ?? '',
+      last?.modified ?? '',
+    ].join('|')
+  }, [sessions])
 
   const TABS = [
     { id: 'overview' as TabType, label: t('stats.tabs.overview'), icon: BarChart3 },
@@ -41,10 +52,15 @@ export default function StatsPanel({ sessions, onClose }: StatsPanelProps) {
     { id: 'achievements' as TabType, label: t('stats.tabs.achievements'), icon: Award },
   ]
 
-  // 只在组件挂载时加载统计，不自动跟随 sessions 变化
+  // sessions 变化时重新加载统计
   useEffect(() => {
+    if (sessions.length === 0) {
+      setStats(null)
+      setLoading(false)
+      return
+    }
     loadStats()
-  }, []) // 空依赖数组
+  }, [statsKey])
 
   const loadStats = async () => {
     if (isLoadingRef.current) return
@@ -52,10 +68,23 @@ export default function StatsPanel({ sessions, onClose }: StatsPanelProps) {
 
     try {
       setLoading(true)
-      const result = await invoke<SessionStats>('get_session_stats', { sessions })
-      console.log('Stats loaded:', result)
-      console.log('Heatmap data:', result.heatmap_data)
-      console.log('Time distribution:', result.time_distribution)
+      const statsSessions: SessionStatsInput[] = sessions.map((session) => ({
+        path: session.path,
+        cwd: session.cwd,
+        modified: session.modified,
+        message_count: session.message_count,
+      }))
+      let result: SessionStats
+      try {
+        result = await invoke<SessionStats>('get_session_stats_light', { sessions: statsSessions })
+      } catch (error: any) {
+        const message = typeof error === 'string' ? error : error?.message
+        if (message && String(message).includes('get_session_stats_light')) {
+          result = await invoke<SessionStats>('get_session_stats', { sessions })
+        } else {
+          throw error
+        }
+      }
       setStats(result)
     } catch (error) {
       console.error('Failed to load stats:', error)

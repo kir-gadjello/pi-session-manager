@@ -12,6 +12,13 @@ export interface SessionInfo {
   last_message_role: string
 }
 
+export interface SessionStatsInput {
+  path: string
+  cwd: string
+  modified: string
+  message_count: number
+}
+
 export interface ToolResult {
   content: Content[]
   isError?: boolean
