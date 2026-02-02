@@ -18,7 +18,10 @@
       "fullscreen": false,
       "minWidth": 1000,
       "minHeight": 600,
-      "devtools": true
+      "devtools": true,
+      "titleBarStyle": "overlay",
+      "hiddenTitle": true,
+      "theme": "dark"
     }],
     "security": {
       "csp": null,
