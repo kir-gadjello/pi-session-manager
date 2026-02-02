@@ -36,6 +36,7 @@ export interface AppSettings {
     sessionDir: string
     cacheEnabled: boolean
     debugMode: boolean
+    demoMode: boolean
     maxCacheSize: number
   }
 }
@@ -77,6 +78,7 @@ export const defaultSettings: AppSettings = {
     sessionDir: '~/.pi/agent/sessions',
     cacheEnabled: true,
     debugMode: false,
+    demoMode: false,
     maxCacheSize: 100,
   },
 }

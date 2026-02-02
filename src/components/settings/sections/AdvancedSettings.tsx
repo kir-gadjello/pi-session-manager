@@ -93,6 +93,26 @@ export default function AdvancedSettings({ settings, onUpdate }: AdvancedSetting
         </label>
       </div>
 
+      <div className="flex items-center justify-between">
+        <div>
+          <label className="text-sm font-medium text-white">
+            {t('app.demoMode', '演示模式')}
+          </label>
+          <p className="text-xs text-[#6a6f85]">
+            {t('app.demoModeDescription', '查看演示数据以探索所有功能')}
+          </p>
+        </div>
+        <label className="relative inline-flex items-center cursor-pointer">
+          <input
+            type="checkbox"
+            checked={settings.advanced.demoMode}
+            onChange={(e) => onUpdate('advanced', 'demoMode', e.target.checked)}
+            className="sr-only peer"
+          />
+          <div className="w-11 h-6 bg-[#2c2d3b] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#569cd6]"></div>
+        </label>
+      </div>
+
       <div className="pt-4 border-t border-[#2c2d3b]">
         <button
           onClick={() => {
