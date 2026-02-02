@@ -1,6 +1,11 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback, useEffect, forwardRef, useRef, useImperativeHandle } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { SessionEntry } from '../types'
+import SessionTreeSearch, { type SessionTreeSearchRef } from './SessionTreeSearch'
+
+export interface SessionTreeRef {
+  focusSearch: () => void
+}
 
 interface SessionTreeProps {
   entries: SessionEntry[]
@@ -25,15 +30,26 @@ interface FlatNode {
   multipleRoots: boolean
 }
 
-export default function SessionTree({
+const SessionTree = forwardRef<SessionTreeRef, SessionTreeProps>(function SessionTree({
   entries,
   activeLeafId,
   onNodeClick,
   filter = 'default'
-}: SessionTreeProps) {
+}: SessionTreeProps,
+ref
+) {
   const { t } = useTranslation()
+  const searchRef = useRef<SessionTreeSearchRef>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [currentFilter, setCurrentFilter] = useState(filter)
+  const [currentResultIndex, setCurrentResultIndex] = useState(0)
+  const [searchResults, setSearchResults] = useState<string[]>([])
+
+  useImperativeHandle(ref, () => ({
+    focusSearch: () => {
+      searchRef.current?.focus()
+    }
+  }))
 
   // Build tree structure
   const treeData = useMemo(() => {
@@ -417,6 +433,97 @@ export default function SessionTree({
     }
   }
 
+  // 计算搜索结果列表
+  const matchedEntryIds = useMemo(() => {
+    if (!searchQuery.trim()) return []
+    
+    const searchTokens = searchQuery.toLowerCase().split(/\s+/).filter(Boolean)
+    const matched: string[] = []
+    
+    flatNodes.forEach(flatNode => {
+      const entry = flatNode.node.entry
+      const label = flatNode.node.label
+      
+      const parts: string[] = []
+      if (label) parts.push(label)
+      
+      switch (entry.type) {
+        case 'message': {
+          const msg = entry.message
+          if (msg) {
+            parts.push(msg.role)
+            if (msg.content) {
+              const content = Array.isArray(msg.content)
+                ? msg.content.filter((c: any) => c.type === 'text' && c.text).map((c: any) => c.text).join('')
+                : msg.content
+              parts.push(content)
+            }
+          }
+          break
+        }
+        case 'custom_message':
+          parts.push(entry.customType || '')
+          parts.push(typeof entry.content === 'string' ? entry.content : '')
+          break
+        case 'compaction':
+          parts.push('compaction')
+          break
+        case 'branch_summary':
+          parts.push('branch summary', entry.summary || '')
+          break
+        case 'model_change':
+          parts.push('model', entry.modelId || '')
+          break
+      }
+      
+      const text = parts.join(' ').toLowerCase()
+      if (searchTokens.every(token => text.includes(token))) {
+        matched.push(entry.id)
+      }
+    })
+    
+    return matched
+  }, [flatNodes, searchQuery])
+
+  // 更新搜索结果
+  useEffect(() => {
+    setSearchResults(matchedEntryIds)
+    setCurrentResultIndex(0)
+  }, [matchedEntryIds])
+
+
+
+  // 搜索导航
+  const handleSearchNext = useCallback(() => {
+    if (searchResults.length === 0) return
+    const newIndex = (currentResultIndex + 1) % searchResults.length
+    setCurrentResultIndex(newIndex)
+    const entryId = searchResults[newIndex]
+    if (onNodeClick) {
+      onNodeClick(entryId, entryId)
+    }
+  }, [searchResults, currentResultIndex, onNodeClick])
+
+  const handleSearchPrevious = useCallback(() => {
+    if (searchResults.length === 0) return
+    const newIndex = (currentResultIndex - 1 + searchResults.length) % searchResults.length
+    setCurrentResultIndex(newIndex)
+    const entryId = searchResults[newIndex]
+    if (onNodeClick) {
+      onNodeClick(entryId, entryId)
+    }
+  }, [searchResults, currentResultIndex, onNodeClick])
+
+  const handleSearchClose = useCallback(() => {
+    setSearchQuery('')
+    setSearchResults([])
+    setCurrentResultIndex(0)
+  }, [])
+
+  const handleSearchChange = useCallback((query: string) => {
+    setSearchQuery(query)
+  }, [])
+
   const handleNodeClick = (flatNode: FlatNode) => {
     const entryId = flatNode.node.entry.id
     if (onNodeClick) {
@@ -426,16 +533,16 @@ export default function SessionTree({
 
   return (
     <div className="flex flex-col h-full">
-      {/* Search */}
-      <div className="sidebar-controls">
-        <input
-          type="text"
-          className="sidebar-search"
-          placeholder={t('session.tree.search')}
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-        />
-      </div>
+      <SessionTreeSearch
+        ref={searchRef}
+        searchQuery={searchQuery}
+        onSearchChange={handleSearchChange}
+        onClear={handleSearchClose}
+        onNext={handleSearchNext}
+        onPrevious={handleSearchPrevious}
+        currentIndex={currentResultIndex}
+        totalResults={searchResults.length}
+      />
 
       {/* Filters */}
       <div className="sidebar-filters">
@@ -495,10 +602,13 @@ export default function SessionTree({
           const displayText = getNodeDisplayText(entry, label)
           const roleClass = getNodeRoleClass(entry)
 
+          const isSearchMatch = searchResults.includes(entry.id)
+          const isCurrentMatch = isSearchMatch && searchResults[currentResultIndex] === entry.id
+
           return (
             <div
               key={`${entry.id}-${index}`}
-              className={`tree-node ${isActive ? 'active' : ''} ${isInPath ? 'in-path' : ''}`}
+              className={`tree-node ${isActive ? 'active' : ''} ${isInPath ? 'in-path' : ''} ${isSearchMatch ? 'search-match' : ''} ${isCurrentMatch ? 'search-match-current' : ''}`}
               onClick={() => handleNodeClick(flatNode)}
             >
               <span className="tree-prefix">{prefix}</span>
@@ -515,4 +625,6 @@ export default function SessionTree({
       </div>
     </div>
   )
-}
+})
+
+export default SessionTree

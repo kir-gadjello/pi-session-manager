@@ -3,6 +3,7 @@ import type { SessionInfo, FavoriteItem } from '../types'
 import { FolderOpen, Loader2, ArrowLeft, Star } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import OpenInTerminalButton from './OpenInTerminalButton'
 import { SessionBadge } from './SessionBadge'
@@ -170,7 +171,7 @@ export default function ProjectList({
                         {project.messageCount} {t('session.list.messages')}
                       </span>
                       <span className="px-2 py-0.5 rounded-md bg-[#222334] border border-border/30">
-                        {t('common.updated', '更新')} {formatShortTime(new Date(project.lastModified).toISOString())}
+                        {t('common.updated')} {formatShortTime(new Date(project.lastModified).toISOString(), t)}
                       </span>
                     </div>
                   </div>
@@ -254,29 +255,27 @@ export default function ProjectList({
                 transform: `translateY(${virtualRow.start}px)`,
               }}
             >
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-start gap-2">
-                      <div className="text-xs font-medium truncate leading-tight flex-1 min-w-0">
-                        {session.name || session.first_message || t('session.list.untitled')}
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start gap-2">
+                    <div className="text-xs font-medium truncate leading-tight flex-1 min-w-0">
+                      {session.name || session.first_message || t('session.list.untitled')}
+                    </div>
+                    {getBadgeType && getBadgeType(session.id) && (
+                      <div className="flex-shrink-0 mt-0.5">
+                        <SessionBadge type={getBadgeType(session.id)!} />
                       </div>
-                      {getBadgeType && getBadgeType(session.id) && (
-                        <div className="flex-shrink-0 mt-0.5">
-                          <SessionBadge type={getBadgeType(session.id)!} />
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground/80">
-                      <span className="whitespace-nowrap">{t('common.created', '创建')} {formatShortTime(session.created)}</span>
-                      <span className="text-border/60">·</span>
-                      <span className="whitespace-nowrap">{t('common.updated', '更新')} {formatShortTime(session.modified)}</span>
-                    </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground/80">
+                    <span className="whitespace-nowrap">{t('common.created')} {formatShortTime(session.created, t)}</span>
+                    <span className="text-border/60">·</span>
+                    <span className="whitespace-nowrap">{t('common.updated')} {formatShortTime(session.modified, t)}</span>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 text-[11px] text-muted-foreground tabular-nums flex-shrink-0">
-                  <span className="px-2 py-0.5 rounded-md bg-[#222334] border border-border/30 text-right">
-                    {session.message_count} {t('session.list.messages')}
+                <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
+                  <span className="text-[10px] text-muted-foreground/60 tabular-nums">
+                    {session.message_count}
                   </span>
                   {onToggleFavorite && (
                     <button
@@ -289,23 +288,27 @@ export default function ProjectList({
                           path: session.path,
                         })
                       }}
-                      className={`p-1 rounded transition-opacity opacity-0 group-hover:opacity-100 z-10 ${
-                        isFavorite ? 'opacity-100 text-yellow-400' : 'text-muted-foreground hover:text-yellow-400'
+                      className={`p-1 rounded transition-all ${
+                        isFavorite 
+                          ? 'text-yellow-400 opacity-100' 
+                          : 'text-muted-foreground/50 hover:text-yellow-400 opacity-0 group-hover:opacity-100'
                       }`}
                       title={isFavorite ? t('favorites.remove') : t('favorites.add')}
                     >
-                      <Star className={`h-3.5 w-3.5 ${isFavorite ? 'fill-current' : ''}`} />
+                      <Star className={`h-3 w-3 ${isFavorite ? 'fill-current' : ''}`} />
                     </button>
                   )}
-                  <OpenInTerminalButton
-                    session={session}
-                    terminal={terminal}
-                    piPath={piPath}
-                    customCommand={customCommand}
-                    size="sm"
-                    variant="ghost"
-                    onError={(error) => console.error('Failed to open in terminal:', error)}
-                  />
+                  <div className="opacity-0 group-hover:opacity-100 transition-all">
+                    <OpenInTerminalButton
+                      session={session}
+                      terminal={terminal}
+                      piPath={piPath}
+                      customCommand={customCommand}
+                      size="sm"
+                      variant="ghost"
+                      onError={(error) => console.error('Failed to open in terminal:', error)}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -335,7 +338,7 @@ function getDirectoryName(cwd: string): string {
   return cwd
 }
 
-function formatShortTime(date: string): string {
+function formatShortTime(date: string, t: TFunction): string {
   const now = new Date()
   const then = new Date(date)
   const diffMs = now.getTime() - then.getTime()
@@ -343,9 +346,9 @@ function formatShortTime(date: string): string {
   const diffHours = Math.floor(diffMs / 3600000)
   const diffDays = Math.floor(diffMs / 86400000)
 
-  if (diffMins < 1) return '刚刚'
-  if (diffMins < 60) return `${diffMins}分钟前`
-  if (diffHours < 24) return `${diffHours}小时前`
-  if (diffDays < 30) return `${diffDays}天前`
-  return `${Math.floor(diffDays / 30)}月前`
+  if (diffMins < 1) return t('common.time.justNow')
+  if (diffMins < 60) return t('common.time.minutesAgo', { count: diffMins })
+  if (diffHours < 24) return t('common.time.hoursAgo', { count: diffHours })
+  if (diffDays < 30) return t('common.time.daysAgo', { count: diffDays })
+  return t('common.time.monthsAgo', { count: Math.floor(diffDays / 30) })
 }

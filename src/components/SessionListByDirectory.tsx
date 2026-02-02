@@ -1,6 +1,7 @@
 import type { RefObject } from 'react'
 import { useState, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { SessionInfo } from '../types'
 import { MessageSquare, Calendar, Trash2, FolderOpen, ChevronDown, ChevronRight, Loader2, Search } from 'lucide-react'
@@ -214,12 +215,12 @@ export default function SessionListByDirectory({
                     <div className="flex items-center gap-2 mt-1 text-[11px] text-muted-foreground/80 tabular-nums">
                       <span className="flex items-center gap-1">
                         <Calendar className="h-3 w-3" />
-                        {t('common.created', '创建')} {formatShortTime(session.created)}
+                        {t('common.created')} {formatShortTime(session.created, t)}
                       </span>
                       <span className="text-border/60">·</span>
                       <span className="flex items-center gap-1">
                         <Calendar className="h-3 w-3" />
-                        {t('common.updated', '更新')} {formatShortTime(session.modified)}
+                        {t('common.updated')} {formatShortTime(session.modified, t)}
                       </span>
                     </div>
                   </div>
@@ -280,7 +281,7 @@ function getDirectoryName(cwd: string, t: any): string {
   return cwd
 }
 
-function formatShortTime(date: string): string {
+function formatShortTime(date: string, t: TFunction): string {
   const now = new Date()
   const then = new Date(date)
   const diffMs = now.getTime() - then.getTime()
@@ -288,9 +289,9 @@ function formatShortTime(date: string): string {
   const diffHours = Math.floor(diffMs / 3600000)
   const diffDays = Math.floor(diffMs / 86400000)
 
-  if (diffMins < 1) return '刚刚'
-  if (diffMins < 60) return `${diffMins}分钟前`
-  if (diffHours < 24) return `${diffHours}小时前`
-  if (diffDays < 30) return `${diffDays}天前`
-  return `${Math.floor(diffDays / 30)}月前`
+  if (diffMins < 1) return t('common.time.justNow')
+  if (diffMins < 60) return t('common.time.minutesAgo', { count: diffMins })
+  if (diffHours < 24) return t('common.time.hoursAgo', { count: diffHours })
+  if (diffDays < 30) return t('common.time.daysAgo', { count: diffDays })
+  return t('common.time.monthsAgo', { count: Math.floor(diffDays / 30) })
 }

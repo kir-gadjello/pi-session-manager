@@ -1,8 +1,9 @@
 import type { RefObject } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { SessionInfo, FavoriteItem } from '../types'
-import { MessageSquare, Trash2, Loader2, Search, FolderOpen, User, Bot, Star } from 'lucide-react'
+import { Trash2, Loader2, Search, Star, Clock } from 'lucide-react'
 import OpenInBrowserButton from './OpenInBrowserButton'
 import OpenInTerminalButton from './OpenInTerminalButton'
 import { SessionBadge } from './SessionBadge'
@@ -41,24 +42,24 @@ export default function SessionList({
   const rowVirtualizer = useVirtualizer({
     count: sessions.length,
     getScrollElement: () => scrollParentRef?.current ?? null,
-    estimateSize: () => 96,
+    estimateSize: () => 66,
     overscan: 8,
   })
 
   if (loading) {
     return (
-      <div className="p-6 text-center text-muted-foreground">
-        <Loader2 className="h-6 w-6 mx-auto mb-2 animate-spin" />
-        <p className="text-xs">{t('session.list.loading')}</p>
+      <div className="h-full flex flex-col items-center justify-center text-muted-foreground/60">
+        <Loader2 className="h-5 w-5 mb-3 animate-spin" />
+        <span className="text-[11px]">{t('session.list.loading')}</span>
       </div>
     )
   }
 
   if (sessions.length === 0) {
     return (
-      <div className="p-6 text-center text-muted-foreground">
-        <Search className="h-8 w-8 mx-auto mb-2 opacity-50" />
-        <p className="text-xs">{t('session.list.empty')}</p>
+      <div className="h-full flex flex-col items-center justify-center text-muted-foreground/50 px-8">
+        <Search className="h-8 w-8 mb-3 opacity-40" />
+        <span className="text-[11px] text-center">{t('session.list.empty')}</span>
       </div>
     )
   }
@@ -76,15 +77,9 @@ export default function SessionList({
           if (!session) return null
 
           const isFavorite = favorites.some(f => f.type === 'session' && f.id === session.id)
-          const createdLabel = formatShortTime(session.created)
-          const updatedLabel = formatShortTime(session.modified)
-          const hoverTitle = [
-            session.name || session.first_message || t('session.list.untitled'),
-            `路径: ${session.path}`,
-            `创建: ${new Date(session.created).toLocaleString()}`,
-            `更新: ${new Date(session.modified).toLocaleString()}`,
-            `消息: ${session.message_count}`,
-          ].join('\n')
+          const updatedLabel = formatShortTime(session.modified, t)
+          const isSelected = selectedSession?.id === session.id
+          const hasPreview = session.last_message || (session.first_message && !session.name)
 
           return (
             <div
@@ -92,9 +87,10 @@ export default function SessionList({
               data-index={virtualRow.index}
               ref={rowVirtualizer.measureElement}
               onClick={() => onSelectSession(session)}
-              title={hoverTitle}
-              className={`px-3 py-3 cursor-pointer transition-colors group border-b border-border/20 ${
-                selectedSession?.id === session.id ? 'bg-[#262738]' : 'hover:bg-[#222334]'
+              className={`relative px-3 py-2 cursor-pointer transition-all group border-b border-border/10 ${
+                isSelected 
+                  ? 'bg-gradient-to-r from-blue-500/5 to-transparent border-l-2 border-l-blue-500' 
+                  : 'hover:bg-[#1a1b26]'
               }`}
               style={{
                 position: 'absolute',
@@ -104,106 +100,83 @@ export default function SessionList({
                 transform: `translateY(${virtualRow.start}px)`,
               }}
             >
-              <div className="flex items-start gap-3">
-                <div className="h-9 w-9 rounded-lg bg-[#1f2130] border border-border/40 flex items-center justify-center flex-shrink-0">
-                  <MessageSquare className="h-4 w-4 text-blue-400" />
+              <div className="flex items-center gap-2 mb-1.5">
+                <h3 className="font-medium text-[11px] text-foreground leading-tight line-clamp-1 flex-1 min-w-0">
+                  {session.name || session.first_message || t('session.list.untitled')}
+                </h3>
+                {getBadgeType && getBadgeType(session.id) && (
+                  <div className="flex-shrink-0">
+                    <SessionBadge type={getBadgeType(session.id)!} />
+                  </div>
+                )}
+                <div className="flex items-center gap-1 text-[9px] text-muted-foreground flex-shrink-0">
+                  <Clock className="h-2.5 w-2.5" />
+                  <span className="whitespace-nowrap">{updatedLabel}</span>
                 </div>
+              </div>
 
-                <div className="flex-1 min-w-0 space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-start gap-2 min-w-0 flex-1">
-                      <h3 className="font-semibold text-xs leading-tight line-clamp-2 flex-1 min-w-0">
-                        {session.name || session.first_message || t('session.list.untitled')}
-                      </h3>
-                      {getBadgeType && getBadgeType(session.id) && (
-                        <div className="flex-shrink-0 mt-0.5">
-                          <SessionBadge type={getBadgeType(session.id)!} />
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                      {onToggleFavorite && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onToggleFavorite({
-                              type: 'session',
-                              id: session.id,
-                              name: session.name || session.first_message || t('session.list.untitled'),
-                              path: session.path,
-                            })
-                          }}
-                          className={`p-1.5 rounded-md transition-all z-10 ${
-                            isFavorite ? 'text-yellow-400 bg-yellow-400/10' : 'text-muted-foreground hover:text-yellow-400 hover:bg-yellow-400/10'
-                          }`}
-                          title={isFavorite ? t('favorites.remove') : t('favorites.add')}
-                        >
-                          <Star className={`h-3.5 w-3.5 ${isFavorite ? 'fill-current' : ''}`} />
-                        </button>
-                      )}
-                      <OpenInTerminalButton
-                        session={session}
-                        terminal={terminal}
-                        piPath={piPath}
-                        customCommand={customCommand}
-                        size="sm"
-                        variant="ghost"
-                        onError={(error) => console.error('Failed to open in terminal:', error)}
-                      />
-                      <OpenInBrowserButton
-                        session={session}
-                        size="sm"
-                        variant="ghost"
-                        onError={(error) => console.error('Failed to open in browser:', error)}
-                      />
-                      {onDeleteSession && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            onDeleteSession(session)
-                          }}
-                          className="p-1.5 text-muted-foreground hover:text-red-500 hover:bg-red-500/10 rounded-md transition-all"
-                          title={t('common.deleteSession')}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
+              {hasPreview && (
+                <p className="text-[10px] text-muted-foreground line-clamp-1 leading-relaxed mb-1.5">
+                  {session.last_message || session.first_message}
+                </p>
+              )}
 
-                  {session.last_message ? (
-                    <div className="flex items-start gap-2">
-                      {session.last_message_role === 'user' ? (
-                        <User className="h-3 w-3 text-blue-500 flex-shrink-0 mt-0.5" />
-                      ) : (
-                        <Bot className="h-3 w-3 text-green-500 flex-shrink-0 mt-0.5" />
-                      )}
-                      <p className="text-xs text-muted-foreground/80 line-clamp-2 leading-relaxed">
-                        {session.last_message}
-                      </p>
-                    </div>
-                  ) : session.first_message && !session.name ? (
-                    <p className="text-xs text-muted-foreground/80 line-clamp-2 leading-relaxed">
-                      {session.first_message}
-                    </p>
-                  ) : null}
+              <div className="flex items-center gap-2">
+                <span className="text-[9px] text-muted-foreground/70 font-mono truncate flex-1 min-w-0">
+                  {formatDirectory(session.cwd) || t('session.list.unknownDirectory')}
+                </span>
 
-                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground/70">
-                    <FolderOpen className="h-3 w-3 flex-shrink-0" />
-                    <span className="truncate font-mono">
-                      {formatDirectory(session.cwd) || t('session.list.unknownDirectory')}
-                    </span>
-                  </div>
+                <span className="text-[9px] text-muted-foreground px-1.5 py-0.5 rounded bg-muted/30 flex-shrink-0">
+                  {session.message_count}
+                </span>
 
-                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground/80">
-                    <span className="px-2 py-0.5 rounded-md bg-[#222334] border border-border/30 whitespace-nowrap">
-                      {session.message_count} {t('session.list.messages')}
-                    </span>
-                    <span className="text-border/60">·</span>
-                    <span className="whitespace-nowrap">{t('common.created', '创建')} {createdLabel}</span>
-                    <span className="text-border/60">·</span>
-                    <span className="whitespace-nowrap">{t('common.updated', '更新')} {updatedLabel}</span>
-                  </div>
+                <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                  {onToggleFavorite && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onToggleFavorite({
+                          type: 'session',
+                          id: session.id,
+                          name: session.name || session.first_message || t('session.list.untitled'),
+                          path: session.path,
+                        })
+                      }}
+                      className={`p-1 rounded transition-all ${
+                        isFavorite ? 'text-yellow-400' : 'text-muted-foreground/60 hover:text-yellow-400'
+                      }`}
+                      title={isFavorite ? t('favorites.remove') : t('favorites.add')}
+                    >
+                      <Star className={`h-3 w-3 ${isFavorite ? 'fill-current' : ''}`} />
+                    </button>
+                  )}
+                  <OpenInTerminalButton
+                    session={session}
+                    terminal={terminal}
+                    piPath={piPath}
+                    customCommand={customCommand}
+                    size="sm"
+                    variant="ghost"
+                    onError={(error) => console.error('Failed to open in terminal:', error)}
+                  />
+                  <OpenInBrowserButton
+                    session={session}
+                    size="sm"
+                    variant="ghost"
+                    onError={(error) => console.error('Failed to open in browser:', error)}
+                  />
+                  {onDeleteSession && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onDeleteSession(session)
+                      }}
+                      className="p-1 text-muted-foreground/60 hover:text-red-500 rounded transition-all"
+                      title={t('common.deleteSession')}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -214,7 +187,7 @@ export default function SessionList({
   )
 }
 
-function formatShortTime(date: string): string {
+function formatShortTime(date: string, t: TFunction): string {
   const now = new Date()
   const then = new Date(date)
   const diffMs = now.getTime() - then.getTime()
@@ -222,17 +195,16 @@ function formatShortTime(date: string): string {
   const diffHours = Math.floor(diffMs / 3600000)
   const diffDays = Math.floor(diffMs / 86400000)
 
-  if (diffMins < 1) return '刚刚'
-  if (diffMins < 60) return `${diffMins}分钟前`
-  if (diffHours < 24) return `${diffHours}小时前`
-  if (diffDays < 30) return `${diffDays}天前`
-  return `${Math.floor(diffDays / 30)}月前`
+  if (diffMins < 1) return t('common.time.justNow')
+  if (diffMins < 60) return t('common.time.minutesAgo', { count: diffMins })
+  if (diffHours < 24) return t('common.time.hoursAgo', { count: diffHours })
+  if (diffDays < 30) return t('common.time.daysAgo', { count: diffDays })
+  return t('common.time.monthsAgo', { count: Math.floor(diffDays / 30) })
 }
 
 function formatDirectory(path: string): string {
   if (!path) return ''
   
-  // 提取最后两级目录
   const parts = path.split('/').filter(Boolean)
   if (parts.length <= 2) return path
   
