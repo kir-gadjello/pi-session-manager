@@ -22,6 +22,13 @@ pub async fn read_session_file(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+pub async fn get_session_by_path(path: String) -> Result<Option<SessionInfo>, String> {
+    let config = crate::config::load_config()?;
+    let conn = crate::sqlite_cache::init_db_with_config(&config)?;
+    crate::sqlite_cache::get_session(&conn, &path)
+}
+
+#[tauri::command]
 pub async fn read_session_file_incremental(
     path: String,
     from_line: usize,

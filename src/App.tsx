@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { FolderOpen, Star, Settings, ArrowLeft, LayoutDashboard } from 'lucide-react'
+import { FolderOpen, Star, Settings, ArrowLeft, LayoutDashboard, Search as SearchIcon } from 'lucide-react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import SessionList from './components/SessionList'
 import ProjectList from './components/ProjectList'
@@ -10,6 +10,7 @@ import RenameDialog from './components/RenameDialog'
 import Dashboard from './components/Dashboard'
 import FavoritesPanel from './components/FavoritesPanel'
 import SettingsPanel from './components/settings/SettingsPanel'
+import FullTextSearch from './components/FullTextSearch'
 import { CommandPalette } from './components/command'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useFileWatcher } from './hooks/useFileWatcher'
@@ -57,6 +58,8 @@ function App() {
   const [showRenameDialog, setShowRenameDialog] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showFavorites, setShowFavorites] = useState(false)
+  const [showFullTextSearch, setShowFullTextSearch] = useState(false)
+  const [initialEntryId, setInitialEntryId] = useState<string | null>(null)
   const [favorites, setFavorites] = useState<FavoriteItem[]>([])
   const [loadingFavorites, setLoadingFavorites] = useState(false)
   const [isInitialized, setIsInitialized] = useState(false)
@@ -113,6 +116,7 @@ function App() {
 
   const handleSelectSession = useCallback((session: SessionInfo) => {
     setSelectedSession(session)
+    setInitialEntryId(null)
     clearBadge(session.id)
   }, [setSelectedSession, clearBadge])
 
@@ -186,11 +190,14 @@ function App() {
   const shortcuts = useMemo(() => ({
     'cmd+r': handleResumeSession,
     'cmd+e': handleExportAndOpen,
+    'cmd+shift+f': () => setShowFullTextSearch(true),
     'cmd+p': () => { setViewMode('project'); setSelectedProject(null); setShowFavorites(false) },
     'cmd+,': () => setShowSettings(true),
     'escape': () => {
       if (showSettings) {
         setShowSettings(false)
+      } else if (showFullTextSearch) {
+        setShowFullTextSearch(false)
       } else if (showExportDialog) {
         setShowExportDialog(false)
       } else if (showRenameDialog) {
@@ -199,6 +206,7 @@ function App() {
         setSelectedProject(null)
       } else {
         setSelectedSession(null)
+        setInitialEntryId(null)
       }
     },
   }), [showSettings, showExportDialog, showRenameDialog, selectedProject, setSelectedSession, handleResumeSession, handleExportAndOpen])
@@ -238,11 +246,18 @@ function App() {
         >
           <div className="flex items-center gap-0.5 ml-auto no-drag">
             <button
-              onClick={() => setSelectedSession(null)}
+              onClick={() => { setSelectedSession(null); setInitialEntryId(null); }}
               className="p-1 rounded transition-colors mr-1 text-[#6a6f85] hover:text-white hover:bg-[#2c2d3b]"
               title={t('dashboard.title')}
             >
               <LayoutDashboard className="h-3.5 w-3.5" />
+            </button>
+            <button
+              onClick={() => setShowFullTextSearch(true)}
+              className="p-1 rounded transition-colors mr-1 text-[#6a6f85] hover:text-white hover:bg-[#2c2d3b]"
+              title={t('search.fullText.placeholder') + ' (Cmd+Shift+F)'}
+            >
+              <SearchIcon className="h-3.5 w-3.5" />
             </button>
             <div className="flex items-center bg-[#252636] rounded-lg p-0.5 mr-1">
               <button
@@ -384,9 +399,10 @@ function App() {
           {selectedSession ? (
             <SessionViewer
               session={selectedSession}
+              initialEntryId={initialEntryId}
               onExport={() => setShowExportDialog(true)}
               onRename={() => setShowRenameDialog(true)}
-              onBack={() => setSelectedSession(null)}
+              onBack={() => { setSelectedSession(null); setInitialEntryId(null); }}
               terminal={terminal}
               piPath={piPath}
               customCommand={customCommand}
@@ -424,6 +440,16 @@ function App() {
       <SettingsPanel
         isOpen={showSettings}
         onClose={() => setShowSettings(false)}
+      />
+
+      <FullTextSearch
+        isOpen={showFullTextSearch}
+        onClose={() => setShowFullTextSearch(false)}
+        onSelectResult={(session, entryId) => {
+          setSelectedSession(session)
+          setInitialEntryId(entryId)
+          setShowFullTextSearch(false)
+        }}
       />
 
       <CommandPalette context={commandContext} />

@@ -1,0 +1,61 @@
+{
+  "version": "0.7.0",
+  "generated_at": 1770695487,
+  "modules": {
+    "src-hooks": {
+      "latest_mtime": 1770693615,
+      "file_count": 16,
+      "files_hash": 1264760189938487637
+    },
+    "src-components-dashboard": {
+      "latest_mtime": 1770693615,
+      "file_count": 14,
+      "files_hash": 10587347847231916766
+    },
+    "src-tauri-src-commands": {
+      "latest_mtime": 1770693615,
+      "file_count": 7,
+      "files_hash": 15728322497262868977
+    },
+    "src-i18n-locales-en-US": {
+      "latest_mtime": 1770693615,
+      "file_count": 15,
+      "files_hash": 1741319651244881771
+    },
+    "root": {
+      "latest_mtime": 1770693615,
+      "file_count": 73,
+      "files_hash": 9281695346393305348
+    },
+    "src-components-command": {
+      "latest_mtime": 1770693615,
+      "file_count": 8,
+      "files_hash": 13042485721460455117
+    },
+    "src-plugins": {
+      "latest_mtime": 1770693615,
+      "file_count": 8,
+      "files_hash": 11793244576146151798
+    },
+    "src-components-settings-sections": {
+      "latest_mtime": 1770693615,
+      "file_count": 9,
+      "files_hash": 8415476232167075104
+    },
+    "src-i18n-locales-zh-CN": {
+      "latest_mtime": 1770693615,
+      "file_count": 15,
+      "files_hash": 8771636872364906769
+    },
+    "src-i18n": {
+      "latest_mtime": 1770693615,
+      "file_count": 2,
+      "files_hash": 3128727737226169076
+    },
+    "src-utils": {
+      "latest_mtime": 1770693615,
+      "file_count": 5,
+      "files_hash": 8955756703841648096
+    }
+  }
+}

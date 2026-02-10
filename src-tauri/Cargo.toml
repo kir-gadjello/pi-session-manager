@@ -15,6 +15,7 @@ serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1.11"
+glob = "0.3"
 dirs = "5.0"
 tantivy = "0.22"
 lazy_static = "1.4"

@@ -25,12 +25,39 @@ pub async fn scan_sessions_with_config(config: &Config) -> Result<Vec<SessionInf
         return Ok(vec![]);
     }
 
-    let conn = sqlite_cache::init_db_with_config(config)?;
-
+    let mut conn_opt = Some(sqlite_cache::init_db_with_config(config)?);
     let mut sessions: Vec<SessionInfo> = vec![];
 
     let entries = fs::read_dir(&sessions_dir)
         .map_err(|e| format!("Failed to read sessions directory: {}", e))?;
+
+    let process_entry = |conn: &rusqlite::Connection, path: PathBuf| -> Result<Option<SessionInfo>, String> {
+        if path.extension().map(|ext| ext == "jsonl").unwrap_or(false) {
+            let path_str = path.to_string_lossy().to_string();
+            let metadata = fs::metadata(&path).map_err(|e| e.to_string())?;
+            let file_modified: DateTime<Utc> = DateTime::from(metadata.modified().unwrap_or(std::time::SystemTime::now()));
+
+            if file_modified > realtime_cutoff {
+                if let Ok(info) = parse_session_info(&path) {
+                    sqlite_cache::upsert_session(conn, &info, file_modified)?;
+                    return Ok(Some(info));
+                }
+            } else {
+                let should_reparse = if let Some(cached_mtime) = sqlite_cache::get_cached_file_modified(conn, &path_str)? {
+                    file_modified > cached_mtime || sqlite_cache::needs_reindexing(conn, &path_str)?
+                } else {
+                    true
+                };
+
+                if should_reparse {
+                    if let Ok(info) = parse_session_info(&path) {
+                        sqlite_cache::upsert_session(conn, &info, file_modified)?;
+                    }
+                }
+            }
+        }
+        Ok(None)
+    };
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -38,31 +65,38 @@ pub async fn scan_sessions_with_config(config: &Config) -> Result<Vec<SessionInf
             if let Ok(files) = fs::read_dir(&path) {
                 for file in files.flatten() {
                     let file_path = file.path();
-                    if file_path.extension().map(|ext| ext == "jsonl").unwrap_or(false) {
-                        let path_str = file_path.to_string_lossy().to_string();
+                    
+                    // Retry loop for corruption recovery
+                    let mut retries = 0;
+                    loop {
+                        if retries > 1 {
+                            eprintln!("Failed to process session {} after retry", file_path.display());
+                            break;
+                        }
 
-                        let metadata = fs::metadata(&file_path);
-                        let file_modified: DateTime<Utc> = match metadata {
-                            Ok(m) => DateTime::from(m.modified().unwrap_or(std::time::SystemTime::now())),
-                            Err(_) => continue,
-                        };
-
-                        if file_modified > realtime_cutoff {
-                            if let Ok(info) = parse_session_info(&file_path) {
+                        let conn = conn_opt.as_ref().ok_or("Database connection lost")?;
+                        match process_entry(conn, file_path.clone()) {
+                            Ok(Some(info)) => {
                                 sessions.push(info);
-                                sqlite_cache::upsert_session(&conn, &sessions.last().unwrap(), file_modified)?;
-                            }
-                        } else {
-                            if let Some(cached_mtime) = sqlite_cache::get_cached_file_modified(&conn, &path_str)? {
-                                if file_modified > cached_mtime {
-                                    if let Ok(info) = parse_session_info(&file_path) {
-                                        sqlite_cache::upsert_session(&conn, &info, file_modified)?;
-                                    }
+                                break;
+                            },
+                            Ok(None) => break,
+                            Err(e) if e.contains("malformed") || e.contains("disk image") || e.contains("not a database") => {
+                                eprintln!("[Scanner] Database corruption detected during scan: {}. Resetting...", e);
+                                drop(conn_opt.take()); // Drop connection
+                                
+                                // Get DB path to delete it
+                                if let Ok(db_path) = sqlite_cache::get_db_path() {
+                                    fs::remove_file(&db_path).ok();
                                 }
-                            } else {
-                                if let Ok(info) = parse_session_info(&file_path) {
-                                    sqlite_cache::upsert_session(&conn, &info, file_modified)?;
-                                }
+                                
+                                // Re-init
+                                conn_opt = Some(sqlite_cache::init_db_with_config(config)?);
+                                retries += 1;
+                            },
+                            Err(e) => {
+                                eprintln!("Error processing session {}: {}", file_path.display(), e);
+                                break;
                             }
                         }
                     }
@@ -71,11 +105,34 @@ pub async fn scan_sessions_with_config(config: &Config) -> Result<Vec<SessionInf
         }
     }
 
-    let historical_sessions = sqlite_cache::get_sessions_modified_before(&conn, realtime_cutoff)?;
-
-    for session in historical_sessions {
-        if !sessions.iter().any(|s| s.path == session.path) {
-            sessions.push(session);
+    // Historical sessions loading with retry
+    let mut retries = 0;
+    loop {
+        if retries > 1 { break; }
+        let conn = conn_opt.as_ref().ok_or("Database connection lost")?;
+        
+        match sqlite_cache::get_sessions_modified_before(conn, realtime_cutoff) {
+            Ok(historical_sessions) => {
+                for session in historical_sessions {
+                    if !sessions.iter().any(|s| s.path == session.path) {
+                        sessions.push(session);
+                    }
+                }
+                break;
+            },
+            Err(e) if e.contains("malformed") || e.contains("disk image") || e.contains("not a database") => {
+                eprintln!("[Scanner] Database corruption loading history: {}. Resetting...", e);
+                drop(conn_opt.take());
+                if let Ok(db_path) = sqlite_cache::get_db_path() {
+                    fs::remove_file(&db_path).ok();
+                }
+                conn_opt = Some(sqlite_cache::init_db_with_config(config)?);
+                retries += 1;
+            },
+            Err(e) => {
+                eprintln!("Error loading historical sessions: {}", e);
+                break;
+            }
         }
     }
 
@@ -124,6 +181,8 @@ pub fn parse_session_info(path: &Path) -> Result<SessionInfo, String> {
     let mut message_count = 0;
     let mut first_message = String::new();
     let mut all_messages = Vec::new();
+    let mut user_messages = Vec::new();
+    let mut assistant_messages = Vec::new();
     let mut name: Option<String> = None;
     let mut last_message = String::new();
     let mut last_message_role = String::new();
@@ -154,8 +213,13 @@ pub fn parse_session_info(path: &Path) -> Result<SessionInfo, String> {
                     let text = extract_message_text(&entry);
                     if !text.is_empty() {
                         all_messages.push(text.clone());
-                        if first_message.is_empty() && role == "user" {
-                            first_message = text.chars().take(100).collect();
+                        if role == "user" {
+                            user_messages.push(text.clone());
+                            if first_message.is_empty() {
+                                first_message = text.chars().take(100).collect();
+                            }
+                        } else if role == "assistant" {
+                            assistant_messages.push(text.clone());
                         }
                         // 更新最后一条消息
                         last_message = text.chars().take(150).collect();
@@ -167,6 +231,8 @@ pub fn parse_session_info(path: &Path) -> Result<SessionInfo, String> {
     }
 
     let all_messages_text = all_messages.join("\n");
+    let user_messages_text = user_messages.join("\n");
+    let assistant_messages_text = assistant_messages.join("\n");
 
     Ok(SessionInfo {
         path: path.to_string_lossy().to_string(),
@@ -178,6 +244,8 @@ pub fn parse_session_info(path: &Path) -> Result<SessionInfo, String> {
         message_count,
         first_message,
         all_messages_text,
+        user_messages_text,
+        assistant_messages_text,
         last_message,
         last_message_role,
     })

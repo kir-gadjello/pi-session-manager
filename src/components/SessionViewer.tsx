@@ -20,6 +20,7 @@ import '../styles/session.css'
 
 interface SessionViewerProps {
   session: SessionInfo
+  initialEntryId?: string | null
   onExport: () => void
   onRename: () => void
   onBack?: () => void
@@ -34,7 +35,7 @@ const SIDEBAR_DEFAULT_WIDTH = 400
 const SIDEBAR_WIDTH_KEY = 'pi-session-manager-sidebar-width'
 const MESSAGE_ITEM_GAP = 16
 
-function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2', piPath, customCommand }: SessionViewerProps) {
+function SessionViewerContent({ session, initialEntryId, onExport, onRename, terminal = 'iterm2', piPath, customCommand }: SessionViewerProps) {
   const { t } = useTranslation()
   const { toggleThinking, toggleToolsExpanded } = useSessionView()
   const [entries, setEntries] = useState<SessionEntry[]>([])
@@ -43,6 +44,16 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
   const [error, setError] = useState<string | null>(null)
   const [showSidebar, setShowSidebar] = useState(false)
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null)
+
+  // Sync activeEntryId when initialEntryId changes (e.g. from search results)
+  useEffect(() => {
+    if (initialEntryId) {
+      setActiveEntryId(initialEntryId)
+    }
+  }, [initialEntryId])
+
+  // ... (rest of the component)
+
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY)
     return saved ? parseInt(saved, 10) : SIDEBAR_DEFAULT_WIDTH
@@ -123,13 +134,19 @@ function SessionViewerContent({ session, onExport, onRename, terminal = 'iterm2'
         console.log('[SessionViewer] Parsed entries count:', parsedEntries.length)
         setEntries(parsedEntries)
 
-        const lastMessage = parsedEntries.filter(e => e.type === 'message').pop()
-        if (lastMessage) {
-          setActiveEntryId(lastMessage.id)
+        if (initialEntryId) {
+          setActiveEntryId(initialEntryId)
+        } else {
+          const lastMessage = parsedEntries.filter(e => e.type === 'message').pop()
+          if (lastMessage) {
+            setActiveEntryId(lastMessage.id)
+          }
         }
 
         // 首次加载后滚动到底部
-        pendingScrollToBottomRef.current = true
+        if (!initialEntryId) {
+          pendingScrollToBottomRef.current = true
+        }
       } catch (err) {
         if (!cancelled) {
           console.error('[SessionViewer] Failed to load session:', err)

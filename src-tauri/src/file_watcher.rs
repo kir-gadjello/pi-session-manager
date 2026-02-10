@@ -1,5 +1,6 @@
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, FileIdMap};
+use std::fs;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
@@ -10,6 +11,13 @@ use tracing::{error, info};
 /// 启动文件监听器
 pub fn start_file_watcher(sessions_dir: PathBuf, app_handle: AppHandle) -> Result<(), String> {
     info!("Starting file watcher for: {:?}", sessions_dir);
+
+    // Ensure the sessions directory exists
+    if !sessions_dir.exists() {
+        fs::create_dir_all(&sessions_dir)
+            .map_err(|e| format!("Failed to create sessions directory: {}", e))?;
+        info!("Created sessions directory: {:?}", sessions_dir);
+    }
 
     // 创建事件通道
     let (tx, rx) = channel();

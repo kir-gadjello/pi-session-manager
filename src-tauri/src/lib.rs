@@ -6,8 +6,8 @@ pub mod models;
 pub mod scanner;
 pub mod scanner_scheduler;
 pub mod search;
-mod session_parser;
-mod sqlite_cache;
+pub mod session_parser;
+pub mod sqlite_cache;
 mod stats;
 mod tantivy_search;
 
@@ -21,11 +21,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan_sessions,
             read_session_file,
+            get_session_by_path,
             read_session_file_incremental,
             get_file_stats,
             get_session_entries,
             search_sessions,
             search_sessions_fts,
+            full_text_search,
             delete_session,
             export_session,
             rename_session,

@@ -1,6 +1,6 @@
 mod favorites;
 mod models;
-mod search;
+pub mod search;
 mod session;
 mod settings;
 mod skills;

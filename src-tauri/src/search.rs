@@ -162,16 +162,16 @@ fn find_matches(
     matches
 }
 
-struct MessageEntry {
-    id: String,
-    role: String,
-    content: String,
-    timestamp: chrono::DateTime<chrono::Utc>,
+pub struct MessageEntry {
+    pub id: String,
+    pub role: String,
+    pub content: String,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 /// 从 BufReader 解析会话条目
 /// 优化：支持流式读取，避免大文件内存问题
-fn parse_session_entries_from_reader<R: std::io::BufRead>(
+pub fn parse_session_entries_from_reader<R: std::io::BufRead>(
     reader: R,
     role_filter: RoleFilter,
     include_tools: bool,
