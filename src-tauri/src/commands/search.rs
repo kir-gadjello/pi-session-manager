@@ -1,7 +1,7 @@
 use crate::models::{SessionInfo, FullTextSearchHit, FullTextSearchResponse};
 use crate::{config, search, sqlite_cache};
 use chrono::{DateTime, Utc};
-use glob::Pattern;
+use rusqlite::ToSql;
 use std::collections::HashMap;
 
 #[tauri::command]
@@ -67,45 +67,126 @@ pub async fn full_text_search(
         _ => None,
     };
     
-    // Fetch more results than needed to account for glob filtering and dedup
-    let fetch_limit = (page + 1) * page_size + 100;
-    
-    // Use message-level FTS: returns (entry_id, session_path, role, snippet, timestamp, rank) directly from index
-    let results = sqlite_cache::search_message_fts(&conn, &query, role_opt, fetch_limit)?;
-    
-    // Apply glob pattern and group by session
-    let mut session_hits: HashMap<String, Vec<(String, String, String, String, f32)>> = 
-        HashMap::new();
-    
-    for (entry_id, session_path, role, snippet_with_tags, timestamp_str, rank) in results {
-        // Apply glob filter
-        if let Some(pattern_str) = &glob_pattern {
-            if !pattern_str.is_empty() {
-                let pattern = Pattern::new(pattern_str)
-                    .map_err(|e| format!("Invalid glob pattern: {}", e))?;
-                if !pattern.matches(&session_path) {
-                    continue;
-                }
-            }
-        }
-        
-        // Remove HTML highlight tags
-        let snippet = snippet_with_tags.replace("<b>", "").replace("</b>", "");
-        
-        session_hits.entry(session_path.clone())
-            .or_default()
-            .push((entry_id, role, snippet, timestamp_str, rank));
+    // Escape query safely for FTS5 (treat as a phrase)
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return Ok(FullTextSearchResponse {
+            hits: vec![],
+            total_hits: 0,
+            has_more: false,
+        });
     }
+    let mut escaped = String::new();
+    for ch in trimmed.chars() {
+        match ch {
+            '"' => escaped.push_str("\"\""),
+            '\\' => escaped.push_str("\\\\"),
+            _ => escaped.push(ch),
+        }
+    }
+    let fts_query = format!("\"{}\"", escaped);
+    
+    // Build the base WHERE clause for FTS and role filter
+    let role_condition = match role_opt {
+        Some("user") => "m.role = 'user'",
+        Some("assistant") => "m.role = 'assistant'",
+        _ => "1=1",
+    };
+    let mut where_clause = format!("WHERE message_fts MATCH ? AND {}", role_condition);
+    let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();
+    params.push(&fts_query);
+    
+    // Include glob pattern if provided
+    if let Some(pattern_str) = &glob_pattern {
+        if !pattern_str.is_empty() {
+            where_clause = format!("{} AND m.session_path GLOB ?", where_clause);
+            params.push(pattern_str as &dyn ToSql);
+        }
+    }
+    
+    // --- Count total hits after per-session limit (max 3 per session) ---
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM (
+            SELECT 1 FROM (
+                SELECT 
+                    ROW_NUMBER() OVER (PARTITION BY m.session_path ORDER BY m.rowid) as rn_in_session
+                FROM message_entries m JOIN message_fts ON m.rowid = message_fts.rowid
+                {}
+            ) WHERE rn_in_session <= 3
+        )",
+        where_clause
+    );
+    
+    let total_hits: usize = {
+        let mut stmt = conn.prepare(&count_sql)
+            .map_err(|e| format!("Failed to prepare total count query: {}", e))?;
+        let count: i64 = match stmt.query_row(params.as_slice(), |row| row.get(0)) {
+            Ok(c) => c,
+            Err(e) => return Err(format!("Failed to get total hits count: {}", e)),
+        };
+        count as usize
+    };
+    
+    // --- Fetch the page of hits with global ordering and per-session limit ---
+    let offset = page * page_size;
+    let limit = page_size;
+    let data_sql = format!(
+        "WITH ranked AS (
+            SELECT 
+                m.id,
+                m.session_path,
+                m.role,
+                m.timestamp,
+                m.rowid as rank,
+                ROW_NUMBER() OVER (PARTITION BY m.session_path ORDER BY m.rowid) as rn_in_session
+            FROM message_entries m
+            JOIN message_fts ON m.rowid = message_fts.rowid
+            {}
+        ),
+        filtered AS (
+            SELECT 
+                id, session_path, role, timestamp, rank,
+                ROW_NUMBER() OVER (ORDER BY rank) as global_rn
+            FROM ranked
+            WHERE rn_in_session <= 3
+        )
+        SELECT f.id, f.session_path, f.role, m.content, f.timestamp, f.rank
+        FROM filtered f
+        JOIN message_entries m ON f.id = m.id
+        WHERE f.global_rn > ? AND f.global_rn <= ?
+        ORDER BY f.rank",
+        where_clause
+    );
+    
+    // Prepare parameters for data query: base params (fts_query, optional glob) plus offset and limit for global_rn
+    let offset_i64 = offset as i64;
+    let limit_i64 = (offset + limit) as i64;
+    let mut data_params: Vec<&dyn rusqlite::ToSql> = params.clone();
+    data_params.push(&offset_i64);
+    data_params.push(&limit_i64);
+    
+    let mut stmt = conn.prepare(&data_sql)
+        .map_err(|e| format!("Failed to prepare data query: {}", e))?;
+    
+    let rows = stmt.query_map(data_params.as_slice(), |row| {
+        Ok((
+            row.get::<_, String>(0)?, // entry_id
+            row.get::<_, String>(1)?, // session_path
+            row.get::<_, String>(2)?, // role
+            row.get::<_, String>(3)?, // content
+            row.get::<_, String>(4)?, // timestamp
+            row.get::<_, f32>(5)?,    // rank
+        ))
+    })
+    .map_err(|e| format!("Failed to query message FTS: {}", e))?
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(|e| format!("Failed to collect message FTS results: {}", e))?;
     
     // Batch fetch session details and build hits
     let mut all_hits = Vec::new();
     let mut sessions_cache: HashMap<String, SessionInfo> = HashMap::new();
     
-    for (session_path, mut entries) in session_hits {
-        // Limit entries per session to distribute results fairly
-        entries.sort_by(|a, b| a.4.partial_cmp(&b.4).unwrap_or(std::cmp::Ordering::Equal));
-        let entries = entries.into_iter().take(3); // max 3 matches per session
-        
+    for (entry_id, session_path, role, content, timestamp_str, rank) in rows {
         // Get session from cache or DB
         let session = if let Some(sess) = sessions_cache.get(&session_path) {
             sess.clone()
@@ -116,47 +197,34 @@ pub async fn full_text_search(
             continue;
         };
         
-        for (entry_id, role, snippet, timestamp_str, rank) in entries {
-            // Timestamp is in storage, parse it
-            // Note: timestamp from search_message_fts is the message timestamp string
-            // We'll keep it as string to avoid parsing overhead, frontend can parse or display as needed
-            // But FullTextSearchHit expects DateTime<Utc>. We can pass a placeholder or parse.
-            // Let's parse it here:
-            let timestamp = match chrono::DateTime::parse_from_rfc3339(&timestamp_str) {
-                Ok(dt) => dt.with_timezone(&chrono::Utc),
-                Err(_) => chrono::Utc::now(),
-            };
-            
-            all_hits.push(FullTextSearchHit {
-                session_id: session.id.clone(),
-                session_path: session.path.clone(),
-                session_name: session.name.clone(),
-                entry_id,
-                role,
-                snippet,
-                timestamp,
-                score: rank,
-            });
-        }
+        // Parse timestamp
+        let timestamp = match chrono::DateTime::parse_from_rfc3339(&timestamp_str) {
+            Ok(dt) => dt.with_timezone(&chrono::Utc),
+            Err(e) => {
+                eprintln!("[FTS] Invalid timestamp '{}' for entry {}: {}", timestamp_str, entry_id, e);
+                continue;
+            }
+        };
+        
+        all_hits.push(FullTextSearchHit {
+            session_id: session.id.clone(),
+            session_path: session.path.clone(),
+            session_name: session.name.clone(),
+            entry_id,
+            role,
+            content,
+            timestamp,
+            score: rank,
+        });
     }
     
-    // Sort by rank (FTS5 rank: lower is better)
-    all_hits.sort_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal));
+    // Rows are already ordered by global_rn, so all_hits is in correct order.
     
-    // Paginate
-    let total_hits = all_hits.len();
-    let start = page * page_size;
-    let end = (start + page_size).min(total_hits);
-    
-    let hits = if start < total_hits {
-        all_hits[start..end].to_vec()
-    } else {
-        vec![]
-    };
+    let has_more = (page + 1) * page_size < total_hits;
     
     Ok(FullTextSearchResponse {
-        hits,
+        hits: all_hits,
         total_hits,
-        has_more: end < total_hits,
+        has_more,
     })
 }

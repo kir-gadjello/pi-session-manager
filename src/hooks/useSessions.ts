@@ -9,7 +9,7 @@ export interface UseSessionsReturn {
   loading: boolean
   selectedSession: SessionInfo | null
   setSelectedSession: (session: SessionInfo | null) => void
-  loadSessions: () => Promise<void>
+  loadSessions: (useFullScan?: boolean) => Promise<void>
   handleDeleteSession: (session: SessionInfo) => Promise<void>
   handleRenameSession: (session: SessionInfo, newName: string) => Promise<void>
 }
@@ -26,13 +26,17 @@ export function useSessions(): UseSessionsReturn {
     selectedSessionRef.current = selectedSession
   }, [selectedSession])
 
-  const loadSessions = useCallback(async () => {
+  const loadSessions = useCallback(async (useFullScan: boolean = false) => {
     try {
       let loadedSessions: SessionInfo[] = []
       if (isDemoMode) {
         loadedSessions = getDemoSessions()
       } else {
-        loadedSessions = await invoke<SessionInfo[]>('scan_sessions')
+        if (useFullScan) {
+          loadedSessions = await invoke<SessionInfo[]>('scan_sessions')
+        } else {
+          loadedSessions = await invoke<SessionInfo[]>('get_cached_sessions')
+        }
       }
       setSessions(loadedSessions)
 

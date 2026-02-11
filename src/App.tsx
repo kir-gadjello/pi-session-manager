@@ -151,16 +151,18 @@ function App() {
   useEffect(() => {
     if (!isInitialized) return
 
-    loadSessions()
+    // 初始加载使用全量扫描，确保数据最新
+    loadSessions(true)
     loadSettings()
     loadFavorites()
   }, [isInitialized, loadSessions, loadSettings, loadFavorites])
 
   useFileWatcher({
     enabled: true,
-    debounceMs: 2000,
+    debounceMs: 5000, // 5秒防抖，减少刷新频率
     onSessionsChanged: () => {
-      loadSessions()
+      // 文件变化时执行全量扫描以更新缓存（已有防抖）
+      loadSessions(true)
     },
   })
 

@@ -195,6 +195,12 @@ fn test_fts_migration_and_integrity() {
     let has_session1 = results.iter().any(|(_, session_path, _, _, _, _)| session_path.contains("session1"));
     assert!(!has_session1, "After deletion, session1 should not appear in search results");
 
+    // Ensure snippets contain highlight tags (<b>)
+    if let Some((_, _, _, snippet, _, _)) = results.first() {
+        assert!(snippet.contains("<b>"), "Snippet missing opening <b> tag: {}", snippet);
+        assert!(snippet.contains("</b>"), "Snippet missing closing </b> tag: {}", snippet);
+    }
+
     // Print success
     println!("FTS migration and integrity test passed OK");
 }
@@ -407,3 +413,105 @@ fn test_backfill_when_message_entries_empty() {
     ).unwrap();
     assert_eq!(me_remaining, 0);
 }
+
+#[test]
+fn test_fts_escaping_and_snippet_tags() {
+    // Minimal in-memory database with FTS schema
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+
+    // Create sessions table
+    conn.execute(
+        "CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
+            path TEXT NOT NULL UNIQUE,
+            cwd TEXT NOT NULL,
+            name TEXT,
+            created TEXT NOT NULL,
+            modified TEXT NOT NULL,
+            file_modified TEXT NOT NULL,
+            message_count INTEGER NOT NULL,
+            first_message TEXT,
+            all_messages_text TEXT,
+            user_messages_text TEXT,
+            assistant_messages_text TEXT,
+            last_message TEXT,
+            last_message_role TEXT,
+            cached_at TEXT NOT NULL,
+            access_count INTEGER DEFAULT 0,
+            last_accessed TEXT
+        )",
+        [],
+    ).unwrap();
+
+    // Insert a dummy session to satisfy foreign key for message_entries
+    conn.execute(
+        "INSERT INTO sessions (id, path, cwd, created, modified, file_modified, message_count, first_message, all_messages_text, user_messages_text, assistant_messages_text, last_message, last_message_role, cached_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        params![
+            "sess1",
+            "/test/session.jsonl",
+            "/test",
+            "2025-01-01T00:00:00Z",
+            "2025-01-01T00:00:00Z",
+            "2025-01-01T00:00:00Z",
+            0i64,
+            "",
+            "",
+            "",
+            "",
+            "",
+            "",
+            Utc::now().to_rfc3339(),
+        ],
+    ).unwrap();
+
+    // Create message_entries table
+    conn.execute(
+        "CREATE TABLE message_entries (
+            id TEXT PRIMARY KEY,
+            session_path TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+            content TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            FOREIGN KEY (session_path) REFERENCES sessions(path) ON DELETE CASCADE
+        )",
+        [],
+    ).unwrap();
+
+    // Ensure FTS schema (creates message_fts virtual table and sync triggers)
+    sqlite_cache::ensure_message_fts_schema(&conn).unwrap();
+
+    // Insert a message entry with special characters: quotes and backslash
+    conn.execute(
+        "INSERT INTO message_entries (id, session_path, role, content, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            "m1",
+            "/test/session.jsonl",
+            "user",
+            "This contains \"double quotes\" and \\ backslash in the text",
+            "2025-01-01T00:00:00Z"
+        ],
+    ).unwrap();
+
+    // Verify FTS has the entry
+    let fts_count: i64 = conn.query_row("SELECT COUNT(*) FROM message_fts", [], |row| row.get(0)).unwrap();
+    assert_eq!(fts_count, 1, "FTS should have one entry after auto-sync");
+
+    // Search for a term that exists: "quotes" - should work
+    let results = sqlite_cache::search_message_fts(&conn, "quotes", None, 10).unwrap();
+    assert!(!results.is_empty(), "Should find entry with 'quotes'");
+    // The snippet should contain highlighting tags
+    let snippet = &results[0].3;
+    assert!(snippet.contains("<b>"), "Snippet should contain <b> tag for query match");
+    assert!(snippet.contains("quotes") || snippet.contains("QUOTES"), "Snippet should contain the matched term 'quotes' (case-insensitive)");
+
+    // Search with a query containing double quotes - should not error
+    let _ = sqlite_cache::search_message_fts(&conn, "\"double quotes\"", None, 10).unwrap();
+    // Search with a backslash - also should not error
+    let _ = sqlite_cache::search_message_fts(&conn, "backslash", None, 10).unwrap();
+
+    // Additional check: snippet contains </b> as well
+    assert!(snippet.contains("</b>"), "Snippet should contain closing </b> tag");
+}
+
+
+

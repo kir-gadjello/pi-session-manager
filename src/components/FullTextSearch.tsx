@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Search, X, Loader2, User, Bot, FileText, ChevronRight, Globe, ArrowUpDown } from 'lucide-react';
+import { Search, X, Loader2, User, Bot, FileText, Globe, ArrowUpDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/core';
+import { shortenPath } from '../utils/format';
 import type { FullTextSearchHit, FullTextSearchResponse, SessionInfo } from '../types';
 
 function getProjectDirName(path: string): string {
@@ -30,6 +31,7 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
 
   const searchTimeoutRef = useRef<NodeJS.Timeout>();
   const inputRef = useRef<HTMLInputElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   const pageSize = 20;
 
@@ -56,10 +58,7 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
 
   const paginatedHits = useMemo(() => sortedHits.slice(0, (hitsPage + 1) * pageSize), [sortedHits, hitsPage]);
 
-  const basename = useCallback((path: string) => path.split('/').pop()?.replace(/\\.json$/, '') || 'Untitled', []);
-
   const remainingToFetch = totalHitsCount - allHits.length;
-  const loadCount = Math.min(pageSize, remainingToFetch);
 
   const formatRelativeTime = (timestamp: string): string => {
     try {
@@ -122,6 +121,29 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
 
   useEffect(() => setHitsPage(0), [sortMode]);
 
+  // Infinite scroll: load more when sentinel enters viewport
+  useEffect(() => {
+    if (!sentinelRef.current) return;
+    const sentinel = sentinelRef.current;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry.isIntersecting && remainingToFetch > 0 && !isSearching) {
+          handleLoadMore();
+        }
+      },
+      {
+        root: sentinel.parentElement, // observe within scroll container
+        rootMargin: '200px',
+        threshold: 0,
+      }
+    );
+    observer.observe(sentinel);
+    return () => {
+      observer.unobserve(sentinel);
+    };
+  }, [remainingToFetch, isSearching, hitsPage, query, roleFilter, globPattern]);
+
   // Auto-focus search input when opened
   useEffect(() => {
     if (isOpen && inputRef.current) {
@@ -147,18 +169,7 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
     }
   };
 
-  const highlightText = (text: string, q: string) => {
-    if (!q.trim()) return text;
-    const parts = q.trim().toLowerCase().split(/\s+/);
-    const pattern = new RegExp(`(${parts.map(p => p.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('|')})`, 'gi');
-    return text.split(pattern).map((part, i) =>
-      pattern.test(part) ? (
-        <mark key={i} className="bg-yellow-400/20 text-yellow-900 rounded px-0.5">
-          {part}
-        </mark>
-      ) : part
-    );
-  };
+
 
   const getSortLabel = () => {
     const keys = {
@@ -173,6 +184,35 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
     const modes: ('score' | 'newest' | 'oldest')[] = ['score', 'newest', 'oldest'];
     const currentIndex = modes.indexOf(sortMode);
     setSortMode(modes[(currentIndex + 1) % 3]);
+  };
+
+  // Escape HTML to prevent XSS
+  const escapeHtml = (text: string): string => {
+    const map: Record<string, string> = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#039;'
+    };
+    return text.replace(/[&<>"']/g, (m) => map[m]);
+  };
+
+  // Highlight query terms in content by wrapping them in <b>
+  const highlightContent = (content: string, query: string): string => {
+    if (!query.trim()) {
+      return escapeHtml(content);
+    }
+    const escaped = escapeHtml(content);
+    const terms = query.trim().split(/\s+/).filter(Boolean);
+    let result = escaped;
+    terms.forEach(term => {
+      if (!term) return;
+      const escapedTerm = escapeHtml(term);
+      const regex = new RegExp(`(${escapedTerm})`, 'gi');
+      result = result.replace(regex, '<b>$1</b>');
+    });
+    return result;
   };
 
   if (!isOpen) return null;
@@ -288,12 +328,17 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
             <span>{t('common.close')}</span>
           </div>
         </div>
-        <div className="flex-1 min-h-0 overflow-hidden bg-[#16161e]/50">
-          <div className="flex flex-col h-full overflow-y-auto p-4 space-y-2 custom-scrollbar">
+        <div id="search-results-wrapper" className="flex-1 min-h-0 overflow-hidden bg-[#16161e]/50">
+          <div className="flex flex-col p-4 space-y-2 custom-scrollbar">
             {error ? (
               <div className="flex flex-col items-center justify-center p-8 text-center text-red-400 bg-red-500/5 border border-red-500/20 rounded-xl">
                 <X className="w-12 h-12 mb-4 opacity-50" />
                 <p className="text-sm font-medium">{error}</p>
+              </div>
+            ) : (isSearching && allHits.length === 0) ? (
+              <div className="flex flex-col items-center justify-center p-12 text-center text-muted-foreground/50">
+                <Loader2 className="w-16 h-16 mb-4 animate-spin" />
+                <p className="text-lg font-medium">{t('search.searching')}</p>
               </div>
             ) : paginatedHits.length === 0 ? (
               !isSearching && query ? (
@@ -315,7 +360,7 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
               <>
                 {paginatedHits.map(hit => {
                   const projectName = getProjectDirName(hit.session_path);
-                  const sessionName = hit.session_name || basename(hit.session_path) || 'Untitled';
+                  const truncatedPath = shortenPath(hit.session_path, 60);
                   const count = sessionCounts.get(hit.session_id) || 1;
                   return (
                     <button
@@ -323,15 +368,18 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
                       onClick={() => handleSelect(hit)}
                       className="group relative w-full p-4 rounded-xl border border-transparent hover:border-blue-500/30 hover:bg-blue-500/5 transition-all duration-200 flex flex-col overflow-hidden shadow-sm hover:shadow-md hover:shadow-blue-500/10"
                     >
-                      <div className="flex items-start justify-between mb-2">
+                      <div className="flex items-center justify-between p-2 bg-blue-500/5 border-b border-blue-500/20 mb-3">
                         <div className="flex items-center gap-2.5 min-w-0 flex-1">
                           <div className="p-1.5 rounded-lg bg-gradient-to-br from-blue-500/10 to-indigo-500/10 border border-blue-500/20 group-hover:shadow-inner shadow-sm flex-shrink-0">
                             <FileText className="w-4 h-4 text-blue-400" />
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5 mb-0.5">
-                              <h3 className="text-sm font-semibold text-foreground truncate group-hover:text-blue-300 transition-colors">
-                                {`${projectName} / ${sessionName}`}
+                              <h3 
+                                className="text-sm font-semibold text-foreground truncate group-hover:text-blue-300 transition-colors"
+                                title={hit.session_name ? `Session: ${hit.session_name}\nPath: ${hit.session_path}` : undefined}
+                              >
+                                {projectName}
                               </h3>
                               {count > 1 && (
                                 <span className="px-2 py-0.5 bg-blue-500/15 text-blue-300 text-xs font-bold rounded-full border border-blue-500/30 ml-auto flex-shrink-0">
@@ -339,7 +387,10 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
                                 </span>
                               )}
                             </div>
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground/70">
+                            <div className="text-xs text-muted-foreground truncate">
+                              {truncatedPath}
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground/70 mt-1">
                               <span className={`px-1.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wide ${
                                 hit.role === 'user'
                                   ? 'bg-gradient-to-r from-blue-500/20 to-blue-600/20 text-blue-300 border border-blue-500/30'
@@ -354,30 +405,16 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
                       </div>
                       <div className="relative pl-10 mb-3">
                         <div className="absolute left-9 top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-muted/30 to-transparent group-hover:from-blue-400/30 group-hover:via-blue-400/60" />
-                        <p className="text-sm/6 text-muted-foreground leading-relaxed italic line-clamp-3 bg-[#1a1b26]/50 px-3 py-2 rounded-lg backdrop-blur-sm group-hover:bg-blue-500/5 group-hover:text-foreground/90 transition-all">
-                          …{highlightText(hit.snippet, query)}…
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 pl-10 text-xs text-muted-foreground/50 group-hover:text-muted-foreground/70 transition-colors">
-                        <span className="truncate font-mono text-foreground/80">{hit.session_path}</span>
-                        <ChevronRight className="w-3 h-3 opacity-50 flex-shrink-0" />
-                        <span className="font-mono bg-muted/30 px-1.5 py-0.5 rounded text-[10px]">#{hit.entry_id.slice(-8)}</span>
+                        <div
+                          className="text-sm/6 text-muted-foreground leading-relaxed italic line-clamp-3 bg-[#1a1b26]/50 px-3 py-2 rounded-lg backdrop-blur-sm group-hover:bg-blue-500/5 group-hover:text-foreground/90 transition-all fts-snippet"
+                          dangerouslySetInnerHTML={{ __html: highlightContent(hit.content, query) }}
+                        />
                       </div>
                     </button>
                   );
                 })}
-                {remainingToFetch > 0 && (
-                  <div className="pt-4 flex justify-center">
-                    <button
-                      onClick={handleLoadMore}
-                      disabled={isSearching}
-                      className="inline-flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-blue-500/10 via-indigo-500/5 to-purple-500/10 border border-blue-500/20 backdrop-blur-sm rounded-xl text-sm font-semibold text-blue-300 hover:from-blue-500/20 hover:border-blue-400/40 hover:shadow-lg hover:shadow-blue-500/20 hover:scale-[1.02] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
-                    >
-                      {isSearching && <Loader2 className="w-4 h-4 animate-spin" />}
-                      {t('common.loadMoreCount', { loadCount, remaining: remainingToFetch })}
-                    </button>
-                  </div>
-                )}
+                {/* Infinite scroll sentinel */}
+                {remainingToFetch > 0 && <div ref={sentinelRef} className="h-1" aria-hidden="true" />}
               </>
             )}
           </div>

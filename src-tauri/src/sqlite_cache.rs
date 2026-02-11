@@ -162,7 +162,7 @@ fn open_and_init_db(db_path: &Path, config: &Config) -> Result<Connection, Strin
         [],
     ).map_err(|e| format!("Failed to create index on message_entries: {}", e))?;
 
-    // Migrate message_entries schema if outdated (missing columns)
+    // Migrate message_entries schema: add missing columns (non-destructive)
     {
         let mut stmt = conn.prepare("PRAGMA table_info(message_entries)").map_err(|e| e.to_string())?;
         let me_columns: Vec<String> = stmt.query_map([], |row| row.get(1))
@@ -170,28 +170,17 @@ fn open_and_init_db(db_path: &Path, config: &Config) -> Result<Connection, Strin
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
         let required_me_columns = ["id", "session_path", "role", "content", "timestamp"];
-        let me_has_all = required_me_columns.iter().all(|&col| me_columns.contains(&col.to_string()));
-        if !me_has_all {
-            eprintln!("[Migration] message_entries schema outdated (missing columns). Dropping and recreating...");
-            // Drop FTS first because it depends on message_entries
-            let _ = conn.execute("DROP TABLE IF EXISTS message_fts", []); // ignore error
-            conn.execute("DROP TABLE IF EXISTS message_entries", []).map_err(|e| e.to_string())?;
-            // Recreate message_entries with full schema
-            conn.execute(
-                "CREATE TABLE message_entries (
-                    id TEXT PRIMARY KEY,
-                    session_path TEXT NOT NULL,
-                    role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
-                    content TEXT NOT NULL,
-                    timestamp TEXT NOT NULL,
-                    FOREIGN KEY (session_path) REFERENCES sessions(path) ON DELETE CASCADE
-                )",
-                [],
-            ).map_err(|e| format!("Failed to recreate message_entries: {}", e))?;
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_message_entries_session ON message_entries(session_path)",
-                [],
-            ).map_err(|e| format!("Failed to create index on message_entries: {}", e))?;
+        let mut migrated = false;
+        for &col in &required_me_columns {
+            if !me_columns.contains(&col.to_string()) {
+                eprintln!("[Migration] Adding missing column '{}' to message_entries", col);
+                let sql = format!("ALTER TABLE message_entries ADD COLUMN {}", col);
+                conn.execute(&sql, []).map_err(|e| format!("Failed to add column {}: {}", col, e))?;
+                migrated = true;
+            }
+        }
+        if migrated {
+            info!("[Migration] message_entries schema updated with missing columns");
         }
     }
 
@@ -234,41 +223,31 @@ fn init_fts5(conn: &Connection) -> Result<(), String> {
         }
     }
 
+    // Ensure triggers exist for sessions_fts to keep index in sync
+    create_sessions_triggers(conn)?;
+
     Ok(())
 }
 
 pub fn ensure_message_fts_schema(conn: &Connection) -> Result<(), String> {
-    // Check if message_entries table exists and has required columns
+    // Check and migrate message_entries schema: add any missing columns (non-destructive)
     let mut stmt = conn.prepare("PRAGMA table_info(message_entries)").map_err(|e| format!("Failed to query message_entries schema: {}", e))?;
     let me_columns: Vec<String> = stmt.query_map([], |row| row.get(1))
         .map_err(|e| format!("Failed to read message_entries columns: {}", e))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("Failed to collect message_entries columns: {}", e))?;
     let required_me_columns = ["id", "session_path", "role", "content", "timestamp"];
-    let me_has_all = required_me_columns.iter().all(|&col| me_columns.contains(&col.to_string()));
-    
-    if !me_has_all {
-        error!("[Migration] message_entries schema incomplete. Has columns: {:?}. Recreating table...", me_columns);
-        // Drop FTS first because it references message_entries
-        let _ = conn.execute("DROP TABLE IF EXISTS message_fts", []); // ignore error
-        conn.execute("DROP TABLE IF EXISTS message_entries", []).map_err(|e| format!("Failed to drop old message_entries: {}", e))?;
-        // Recreate with full schema
-        conn.execute(
-            "CREATE TABLE message_entries (
-                id TEXT PRIMARY KEY,
-                session_path TEXT NOT NULL,
-                role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
-                content TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                FOREIGN KEY (session_path) REFERENCES sessions(path) ON DELETE CASCADE
-            )",
-            [],
-        ).map_err(|e| format!("Failed to recreate message_entries: {}", e))?;
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_message_entries_session ON message_entries(session_path)",
-            [],
-        ).map_err(|e| format!("Failed to create index on message_entries: {}", e))?;
-        info!("[Migration] Recreated message_entries table");
+    let mut migrated = false;
+    for &col in &required_me_columns {
+        if !me_columns.contains(&col.to_string()) {
+            warn!("[Migration] message_entries missing column '{}', adding...", col);
+            let sql = format!("ALTER TABLE message_entries ADD COLUMN {}", col);
+            conn.execute(&sql, []).map_err(|e| format!("Failed to add column {}: {}", col, e))?;
+            migrated = true;
+        }
+    }
+    if migrated {
+        info!("[Migration] message_entries schema updated by adding missing columns");
     } else {
         debug!("[Schema] message_entries columns OK: {:?}", me_columns);
     }
@@ -282,12 +261,8 @@ pub fn ensure_message_fts_schema(conn: &Connection) -> Result<(), String> {
     if !fts_exists {
         info!("[FTS] Creating message_fts virtual table");
         create_message_fts5(conn)?;
-        // Rebuild index from existing message_entries
-        conn.execute("INSERT INTO message_fts(message_fts) VALUES('rebuild')", [])
-            .map_err(|e| format!("Failed to rebuild message_fts index: {}", e))?;
-        info!("[FTS] Rebuilt message_fts index");
-        // Drop any auto-sync triggers; we will maintain the index manually.
-        drop_message_entries_triggers(conn)?;
+        // Create triggers to keep the index in sync with message_entries.
+        create_message_entries_triggers(conn)?;
         return Ok(());
     }
     
@@ -305,9 +280,8 @@ pub fn ensure_message_fts_schema(conn: &Connection) -> Result<(), String> {
         conn.execute("DROP TABLE IF EXISTS message_fts", [])
             .map_err(|e| format!("Failed to drop old message_fts: {}", e))?;
         create_message_fts5(conn)?;
-        conn.execute("INSERT INTO message_fts(message_fts) VALUES('rebuild')", [])
-            .map_err(|e| format!("Failed to rebuild message_fts after schema fix: {}", e))?;
-        info!("[Migration] Recreated message_fts virtual table and rebuilt index");
+        // Index will be automatically rebuilt from message_entries content.
+        info!("[Migration] Recreated message_fts virtual table");
     } else {
         debug!("[Schema] message_fts columns OK: {:?}", fts_columns);
         // Check if it's using auto-sync with content='message_entries'
@@ -322,16 +296,15 @@ pub fn ensure_message_fts_schema(conn: &Connection) -> Result<(), String> {
             conn.execute("DROP TABLE IF EXISTS message_fts", [])
                 .map_err(|e| format!("Failed to drop manual message_fts: {}", e))?;
             create_message_fts5(conn)?;
-            conn.execute("INSERT INTO message_fts(message_fts) VALUES('rebuild')", [])
-                .map_err(|e| format!("Failed to rebuild message_fts after conversion: {}", e))?;
+            // Index will be automatically rebuilt from message_entries content.
             info!("[Migration] Converted message_fts to auto-sync");
         } else {
             debug!("[Schema] message_fts already auto-sync");
         }
     }
     
-    // Drop any triggers to avoid duplicate entries; we maintain FTS manually in this implementation.
-    drop_message_entries_triggers(conn)?;
+    // Ensure triggers exist to keep message_fts in sync with message_entries.
+    create_message_entries_triggers(conn)?;
     
     // Backfill message_entries if empty: ensures message-level FTS has data after migration or fresh install with existing sessions.
     // This runs once when message_entries is empty but there are sessions in the DB.
@@ -391,14 +364,6 @@ pub fn ensure_message_fts_schema(conn: &Connection) -> Result<(), String> {
                         }
                     }
                     info!("[Migration] Backfilled message entries for {} sessions (attempted {})", backfilled, total_paths);
-
-                    // Rebuild FTS index to ensure it reflects the backfilled content
-                    info!("[Migration] Rebuilding message_fts index after backfill");
-                    if let Err(e) = conn.execute("INSERT INTO message_fts(message_fts) VALUES('rebuild')", []) {
-                        error!("[Migration] Failed to rebuild message_fts: {}", e);
-                    } else {
-                        info!("[Migration] Rebuilt message_fts index");
-                    }
                 }
             }
         },
@@ -430,6 +395,70 @@ fn drop_sessions_fts_triggers(conn: &Connection) -> Result<(), String> {
         .map_err(|e| format!("Failed to drop trigger sessions_ad: {}", e))?;
     conn.execute("DROP TRIGGER IF EXISTS sessions_au", [])
         .map_err(|e| format!("Failed to drop trigger sessions_au: {}", e))?;
+    Ok(())
+}
+
+// Create triggers to keep message_fts in sync with message_entries
+fn create_message_entries_triggers(conn: &Connection) -> Result<(), String> {
+    // Insert trigger
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS message_entries_ai AFTER INSERT ON message_entries BEGIN
+         INSERT INTO message_fts(rowid, session_path, role, content)
+         VALUES (new.rowid, new.session_path, new.role, new.content); END;",
+        [],
+    ).map_err(|e| format!("Failed to create trigger message_entries_ai: {}", e))?;
+
+    // Delete trigger (use 'delete' command)
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS message_entries_ad AFTER DELETE ON message_entries BEGIN
+         INSERT INTO message_fts(message_fts, rowid, session_path, role, content)
+         VALUES('delete', old.rowid, old.session_path, old.role, old.content); END;",
+        [],
+    ).map_err(|e| format!("Failed to create trigger message_entries_ad: {}", e))?;
+
+    // Update trigger (delete old, insert new)
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS message_entries_au AFTER UPDATE ON message_entries BEGIN
+         INSERT INTO message_fts(message_fts, rowid, session_path, role, content)
+         VALUES('delete', old.rowid, old.session_path, old.role, old.content);
+         INSERT INTO message_fts(rowid, session_path, role, content)
+         VALUES (new.rowid, new.session_path, new.role, new.content); END;",
+        [],
+    ).map_err(|e| format!("Failed to create trigger message_entries_au: {}", e))?;
+
+    debug!("[FTS] Created message_entries sync triggers");
+    Ok(())
+}
+
+// Create triggers to keep sessions_fts in sync with sessions
+fn create_sessions_triggers(conn: &Connection) -> Result<(), String> {
+    // Insert trigger
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS sessions_ai AFTER INSERT ON sessions BEGIN
+         INSERT INTO sessions_fts(rowid, path, cwd, name, first_message, all_messages_text, user_messages_text, assistant_messages_text)
+         VALUES (new.rowid, new.path, new.cwd, new.name, new.first_message, new.all_messages_text, new.user_messages_text, new.assistant_messages_text); END;",
+        [],
+    ).map_err(|e| format!("Failed to create trigger sessions_ai: {}", e))?;
+
+    // Delete trigger
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS sessions_ad AFTER DELETE ON sessions BEGIN
+         INSERT INTO sessions_fts(sessions_fts, rowid, path, cwd, name, first_message, all_messages_text, user_messages_text, assistant_messages_text)
+         VALUES('delete', old.rowid, old.path, old.cwd, old.name, old.first_message, old.all_messages_text, old.user_messages_text, old.assistant_messages_text); END;",
+        [],
+    ).map_err(|e| format!("Failed to create trigger sessions_ad: {}", e))?;
+
+    // Update trigger
+    conn.execute(
+        "CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE ON sessions BEGIN
+         INSERT INTO sessions_fts(sessions_fts, rowid, path, cwd, name, first_message, all_messages_text, user_messages_text, assistant_messages_text)
+         VALUES('delete', old.rowid, old.path, old.cwd, old.name, old.first_message, old.all_messages_text, old.user_messages_text, old.assistant_messages_text);
+         INSERT INTO sessions_fts(rowid, path, cwd, name, first_message, all_messages_text, user_messages_text, assistant_messages_text)
+         VALUES (new.rowid, new.path, new.cwd, new.name, new.first_message, new.all_messages_text, new.user_messages_text, new.assistant_messages_text); END;",
+        [],
+    ).map_err(|e| format!("Failed to create trigger sessions_au: {}", e))?;
+
+    debug!("[FTS] Created sessions sync triggers");
     Ok(())
 }
 
@@ -823,7 +852,7 @@ pub fn search_fts5(conn: &Connection, query: &str, limit: usize) -> Result<Vec<S
     let mut stmt = conn.prepare(
         "SELECT path FROM sessions_fts
          WHERE sessions_fts MATCH ?
-         ORDER BY rank
+         ORDER BY rowid DESC
          LIMIT ?"
     ).map_err(|e| format!("Failed to prepare FTS5 statement: {}", e))?;
 
@@ -895,9 +924,6 @@ pub fn delete_message_entries_for_session(conn: &Connection, session_path: &str)
     match conn.execute("DELETE FROM message_entries WHERE session_path = ?", params![session_path]) {
         Ok(_) => {
             debug!("[Delete] Deleted message entries for session: {}", session_path);
-            // Also delete from message_fts (manual sync) if it exists
-            let _ = conn.execute("DELETE FROM message_fts WHERE session_path = ?", params![session_path])
-                .map_err(|e| debug!("[Delete] Failed to delete from message_fts: {}", e));
         }
         Err(e) => {
             let err_str = format!("{:?}", e);
@@ -977,12 +1003,6 @@ pub fn insert_message_entries(conn: &Connection, session: &SessionInfo) -> Resul
                                 ],
                             ).map_err(|e| format!("Failed to insert message entry (session: {}, entry: {}): {}", 
                                 session.path, entry_id, e))?;
-                            // Also insert into message_fts if it exists, to keep index in sync (auto-sync may be disabled)
-                            let rowid = conn.last_insert_rowid();
-                            let _ = conn.execute(
-                                "INSERT OR REPLACE INTO message_fts(rowid, session_path, role, content) VALUES (?1, ?2, ?3, ?4)",
-                                params![rowid, &session.path, role, &content],
-                            ).map_err(|_| format!("Failed to insert into message_fts (session: {}, entry: {})", session.path, entry_id));
                             inserted_count += 1;
                         }
                     }
@@ -1003,28 +1023,29 @@ pub fn search_message_fts(
     role_filter: Option<&str>,
     limit: usize
 ) -> Result<Vec<(String, String, String, String, String, f32)>, String> {
-    // Build FTS query with optional role filter
-    let clean_query = query.trim().replace("'", "''");
-    if clean_query.is_empty() {
+    // Escape and treat query as a literal phrase for FTS5 MATCH
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
         return Ok(vec![]);
     }
+    // Escape double quotes and backslashes per FTS5 requirements
+    let mut escaped = String::new();
+    for ch in trimmed.chars() {
+        match ch {
+            '"' => escaped.push_str("\"\""),
+            '\\' => escaped.push_str("\\\\"),
+            _ => escaped.push(ch),
+        }
+    }
+    // Wrap in double quotes to match as a phrase
+    let fts_query = format!("\"{}\"", escaped);
     
-    // Format query for FTS5: prefix matching with *
-    let query_terms: Vec<&str> = clean_query.split_whitespace().collect();
-    let formatted_terms = query_terms.iter()
-        .map(|term| format!("{}*", term))
-        .collect::<Vec<String>>()
-        .join(" OR ");
-    
-    // Build column filter
-    let (fts_column, role_condition) = match role_filter {
-        Some("user") => ("content", "m.role = 'user'"),
-        Some("assistant") => ("content", "m.role = 'assistant'"),
-        _ => ("content", "1=1"),
+    // Build role filter condition
+    let role_condition = match role_filter {
+        Some("user") => "m.role = 'user'",
+        Some("assistant") => "m.role = 'assistant'",
+        _ => "1=1",
     };
-    
-    // Search across all columns (content and role). Role filtered separately.
-    let fts_query = formatted_terms;
     
     let sql = format!(
         "SELECT \
@@ -1033,12 +1054,12 @@ pub fn search_message_fts(
             m.role, \
             snippet(message_fts, 2, '<b>', '</b>', '...', 80) as snippet, \
             m.timestamp, \
-            f.rank \
+            m.rowid as rank \
          FROM message_entries m \
-         JOIN message_fts f ON m.rowid = f.rowid \
+         JOIN message_fts ON m.rowid = message_fts.rowid \
          WHERE message_fts MATCH ? \
          AND {} \
-         ORDER BY f.rank \
+         ORDER BY m.rowid \
          LIMIT ?",
         role_condition
     );
@@ -1063,29 +1084,6 @@ pub fn search_message_fts(
     Ok(rows)
 }
 
-/// Rebuild message FTS index for all existing sessions
-pub fn rebuild_message_fts(conn: &Connection) -> Result<(), String> {
-    // Clear existing message entries and rebuild from all sessions
-    conn.execute("DELETE FROM message_entries", []).map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM message_fts", []).map_err(|e| e.to_string())?;
-    
-    // Get all session paths
-    let mut stmt = conn.prepare("SELECT path FROM sessions")
-        .map_err(|e| e.to_string())?;
-    let paths: Vec<String> = stmt.query_map([], |row| row.get(0))
-        .map_err(|e| e.to_string())?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-    
-    // For each session, parse and insert message entries
-    for path in paths {
-        if let Ok(Some(session)) = get_session(conn, &path) {
-            insert_message_entries(conn, &session)?;
-        }
-    }
-    
-    Ok(())
-}
 
 fn parse_timestamp(s: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(s)

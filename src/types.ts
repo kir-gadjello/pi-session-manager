@@ -171,7 +171,7 @@ export interface FullTextSearchHit {
   session_name?: string
   entry_id: string
   role: string
-  snippet: string
+  content: string
   timestamp: string
   score: number
 }

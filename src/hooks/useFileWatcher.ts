@@ -3,7 +3,7 @@ import { listen, UnlistenFn } from '@tauri-apps/api/event'
 
 interface UseFileWatcherOptions {
   enabled?: boolean
-  onSessionsChanged: () => void
+  onSessionsChanged: (useCache: boolean) => void
   debounceMs?: number // 防抖时间（毫秒）
 }
 
@@ -15,7 +15,7 @@ interface UseFileWatcherOptions {
 export function useFileWatcher({
   enabled = true,
   onSessionsChanged,
-  debounceMs = 2000, // 默认 2 秒防抖
+  debounceMs = 5000, // 默认 5 秒防抖（减少刷新频率）
 }: UseFileWatcherOptions) {
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null)
   const onSessionsChangedRef = useRef(onSessionsChanged)
@@ -40,7 +40,8 @@ export function useFileWatcher({
           }
 
           debounceTimerRef.current = setTimeout(() => {
-            onSessionsChangedRef.current()
+            // 使用缓存刷新，避免昂贵的全量扫描
+            onSessionsChangedRef.current(false)
             debounceTimerRef.current = null
           }, debounceMs)
         })

@@ -22,6 +22,7 @@ pub fn run() {
             scan_sessions,
             read_session_file,
             get_session_by_path,
+            get_cached_sessions,
             read_session_file_incremental,
             get_file_stats,
             get_session_entries,

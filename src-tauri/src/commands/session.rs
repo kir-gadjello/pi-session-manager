@@ -28,6 +28,15 @@ pub async fn get_session_by_path(path: String) -> Result<Option<SessionInfo>, St
     crate::sqlite_cache::get_session(&conn, &path)
 }
 
+/// Returns all sessions from the local cache without performing a full filesystem scan.
+/// This command is fast (sub-millisecond) and intended for periodic auto-refresh triggered by file watcher events.
+#[tauri::command]
+pub async fn get_cached_sessions() -> Result<Vec<SessionInfo>, String> {
+    let config = crate::config::load_config()?;
+    let conn = crate::sqlite_cache::init_db_with_config(&config)?;
+    crate::sqlite_cache::get_all_sessions(&conn)
+}
+
 #[tauri::command]
 pub async fn read_session_file_incremental(
     path: String,

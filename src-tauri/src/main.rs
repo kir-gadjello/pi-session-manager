@@ -20,6 +20,7 @@ fn main() {
             pi_session_manager::scan_sessions,
             pi_session_manager::read_session_file,
             pi_session_manager::get_session_by_path,
+            pi_session_manager::get_cached_sessions,
             pi_session_manager::read_session_file_incremental,
             pi_session_manager::get_file_stats,
             pi_session_manager::get_session_entries,
