@@ -24,5 +24,9 @@ export const search = {
     },
     globPlaceholder: 'Path glob (e.g. **/src/**)',
     startTyping: 'Type to start full-text search',
+    sortScore: 'Relevance',
+    sortNewest: 'Newest',
+    sortOldest: 'Oldest',
+    sortTitle: 'Sort by',
   },
 } as const

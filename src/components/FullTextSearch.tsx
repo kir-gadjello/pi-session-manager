@@ -1,289 +1,388 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { Search, X, Loader2, User, Bot, FileText, ChevronRight, Globe, Filter } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
-import { invoke } from '@tauri-apps/api/core'
-import type { FullTextSearchHit, FullTextSearchResponse, SessionInfo } from '../types'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Search, X, Loader2, User, Bot, FileText, ChevronRight, Globe, ArrowUpDown } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { invoke } from '@tauri-apps/api/core';
+import type { FullTextSearchHit, FullTextSearchResponse, SessionInfo } from '../types';
+
+function getProjectDirName(path: string): string {
+  const normalized = path.replace(/\/$/, '');
+  const parts = normalized.split('/');
+  return parts.length >= 2 ? parts[parts.length - 2] : parts[parts.length - 1] || path;
+}
 
 interface FullTextSearchProps {
-  isOpen: boolean
-  onClose: () => void
-  onSelectResult: (session: SessionInfo, entryId: string) => void
+  isOpen: boolean;
+  onClose: () => void;
+  onSelectResult: (session: SessionInfo, entryId: string) => void;
 }
 
 export default function FullTextSearch({ isOpen, onClose, onSelectResult }: FullTextSearchProps) {
-  const { t } = useTranslation()
-  const [query, setQuery] = useState('')
-  const [roleFilter, setRoleFilter] = useState<'all' | 'user' | 'assistant'>('all')
-  const [globPattern, setGlobPattern] = useState('')
-  const [results, setResults] = useState<FullTextSearchHit[]>([])
-  const [totalHits, setTotalHits] = useState(0)
-  const [isSearching, setIsSearching] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [page, setPage] = useState(0)
-  const [hasMore, setHasMore] = useState(false)
-  
-  const searchTimeoutRef = useRef<NodeJS.Timeout>()
-  const inputRef = useRef<HTMLInputElement>(null)
+  const { t } = useTranslation();
+  const [query, setQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState<'all' | 'user' | 'assistant'>('all');
+  const [globPattern, setGlobPattern] = useState('');
+  const [allHits, setAllHits] = useState<FullTextSearchHit[]>([]);
+  const [totalHitsCount, setTotalHitsCount] = useState(0);
+  const [isSearching, setIsSearching] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [hitsPage, setHitsPage] = useState(0);
+  const [sortMode, setSortMode] = useState<'score' | 'newest' | 'oldest'>('score');
+
+  const searchTimeoutRef = useRef<NodeJS.Timeout>();
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const pageSize = 20;
+
+  const sortedHits = useMemo(() => {
+    const sorted = [...allHits];
+    switch (sortMode) {
+      case 'newest':
+        sorted.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        break;
+      case 'oldest':
+        sorted.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+        break;
+      default:
+        sorted.sort((a, b) => b.score - a.score);
+    }
+    return sorted;
+  }, [allHits, sortMode]);
+
+  const sessionCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    allHits.forEach(hit => map.set(hit.session_id, (map.get(hit.session_id) ?? 0) + 1));
+    return map;
+  }, [allHits]);
+
+  const paginatedHits = useMemo(() => sortedHits.slice(0, (hitsPage + 1) * pageSize), [sortedHits, hitsPage]);
+
+  const basename = useCallback((path: string) => path.split('/').pop()?.replace(/\\.json$/, '') || 'Untitled', []);
+
+  const remainingToFetch = totalHitsCount - allHits.length;
+  const loadCount = Math.min(pageSize, remainingToFetch);
+
+  const formatRelativeTime = (timestamp: string): string => {
+    try {
+      const date = new Date(timestamp);
+      const now = new Date();
+      const diffMs = now.getTime() - date.getTime();
+      const minute = 60 * 1000;
+      const hour = 60 * minute;
+      const day = 24 * hour;
+
+      if (diffMs < minute) return t('common.time.justNow');
+      if (diffMs < hour) return t('common.time.minutesAgo', { count: Math.floor(diffMs / minute) });
+      if (diffMs < day) return t('common.time.hoursAgo', { count: Math.floor(diffMs / hour) });
+      if (diffMs < 7 * day) return t('common.time.daysAgo', { count: Math.floor(diffMs / day) });
+      return t('common.time.monthsAgo', { count: Math.floor(diffMs / (30 * day)) });
+    } catch {
+      return timestamp;
+    }
+  };
 
   const performSearch = useCallback(async (searchQuery: string, role: string, glob: string, pageNum: number, append = false) => {
     if (!searchQuery.trim()) {
-      setResults([])
-      setTotalHits(0)
-      setHasMore(false)
-      setError(null)
-      return
+      setAllHits([]);
+      setTotalHitsCount(0);
+      setHitsPage(0);
+      return;
     }
-
-    setIsSearching(true)
-    setError(null)
+    setIsSearching(true);
+    setError(null);
     try {
       const response = await invoke<FullTextSearchResponse>('full_text_search', {
         query: searchQuery,
         roleFilter: role,
         globPattern: glob || null,
         page: pageNum,
-        pageSize: 20
-      })
-
-      if (append) {
-        setResults(prev => [...prev, ...response.hits])
-      } else {
-        setResults(response.hits)
-      }
-      setTotalHits(response.total_hits)
-      setHasMore(response.has_more)
-    } catch (err) {
-      console.error('Full text search failed:', err)
-      setError(typeof err === 'string' ? err : 'Search failed')
+        pageSize,
+      });
+      setAllHits(prev => append ? [...prev, ...response.hits] : response.hits);
+      setTotalHitsCount(response.total_hits);
+      setHitsPage(pageNum);
+    } catch (err: any) {
+      console.error('Full text search failed:', err);
+      setError(err as string || 'Search failed');
     } finally {
-      setIsSearching(false)
+      setIsSearching(false);
     }
-  }, [])
+  }, [pageSize]);
 
   useEffect(() => {
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current)
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    const timeout = setTimeout(() => {
+      setHitsPage(0);
+      performSearch(query, roleFilter, globPattern, 0);
+    }, 300);
+    searchTimeoutRef.current = timeout;
+    return () => {
+      if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
+    };
+  }, [query, roleFilter, globPattern, performSearch]);
+
+  useEffect(() => setHitsPage(0), [sortMode]);
+
+  // Auto-focus search input when opened
+  useEffect(() => {
+    if (isOpen && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
     }
-
-    searchTimeoutRef.current = setTimeout(() => {
-      setPage(0)
-      performSearch(query, roleFilter, globPattern, 0)
-    }, 300)
-
-    return () => clearTimeout(searchTimeoutRef.current)
-  }, [query, roleFilter, globPattern, performSearch])
+  }, [isOpen]);
 
   const handleLoadMore = () => {
-    const nextPage = page + 1
-    setPage(nextPage)
-    performSearch(query, roleFilter, globPattern, nextPage, true)
-  }
+    const nextPage = hitsPage + 1;
+    performSearch(query, roleFilter, globPattern, nextPage, true);
+  };
 
   const handleSelect = async (hit: FullTextSearchHit) => {
     try {
-      // 获取完整的 SessionInfo 以便在 App 中设置
-      const session = await invoke<SessionInfo>('get_session_by_path', { path: hit.session_path })
+      const session = await invoke<SessionInfo>('get_session_by_path', { path: hit.session_path });
       if (session) {
-        onSelectResult(session, hit.entry_id)
-        onClose()
+        onSelectResult(session, hit.entry_id);
+        onClose();
       }
     } catch (error) {
-      console.error('Failed to get session for result:', error)
+      console.error('Failed to get session:', error);
     }
-  }
+  };
 
-  // Handle ESC key
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
-        onClose()
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, onClose])
+  const highlightText = (text: string, q: string) => {
+    if (!q.trim()) return text;
+    const parts = q.trim().toLowerCase().split(/\s+/);
+    const pattern = new RegExp(`(${parts.map(p => p.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')).join('|')})`, 'gi');
+    return text.split(pattern).map((part, i) =>
+      pattern.test(part) ? (
+        <mark key={i} className="bg-yellow-400/20 text-yellow-900 rounded px-0.5">
+          {part}
+        </mark>
+      ) : part
+    );
+  };
 
-  // Focus input on open
-  useEffect(() => {
-    if (isOpen) {
-      setTimeout(() => inputRef.current?.focus(), 100)
-    }
-  }, [isOpen])
+  const getSortLabel = () => {
+    const keys = {
+      score: 'search.fullText.sortScore',
+      newest: 'search.fullText.sortNewest',
+      oldest: 'search.fullText.sortOldest',
+    };
+    return t(keys[sortMode]);
+  };
 
-  const highlightText = (text: string, query: string) => {
-    if (!query.trim()) return text
-    const parts = query.trim().split(/\s+/)
-    const pattern = new RegExp(`(${parts.join('|')})`, 'gi')
-    return text.split(pattern).map((part, i) => 
-      pattern.test(part) ? <mark key={i} className="bg-blue-500/30 text-blue-200 rounded-sm px-0.5 no-underline">{part}</mark> : part
-    )
-  }
+  const cycleSort = () => {
+    const modes: ('score' | 'newest' | 'oldest')[] = ['score', 'newest', 'oldest'];
+    const currentIndex = modes.indexOf(sortMode);
+    setSortMode(modes[(currentIndex + 1) % 3]);
+  };
 
-  if (!isOpen) return null
+  if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-start justify-center pt-[10vh] bg-black/40 backdrop-blur-sm animate-in fade-in duration-200" onClick={onClose}>
-      <div 
+    <div
+      className="fixed inset-0 z-[60] flex items-start justify-center pt-[10vh] bg-black/40 backdrop-blur-sm animate-in fade-in duration-200"
+      onClick={onClose}
+    >
+      <div
         className="w-full max-w-3xl bg-[#1a1b26] border border-[#2a2b36] rounded-xl shadow-2xl flex flex-col max-h-[80vh] overflow-hidden animate-in zoom-in-95 duration-200"
         onClick={e => e.stopPropagation()}
       >
-        {/* Search Header */}
         <div className="p-4 border-b border-[#2a2b36] bg-[#1f2029]">
           <div className="relative flex items-center gap-3 mb-4">
-            <Search className="w-5 h-5 text-blue-400" />
+            <Search className="w-5 h-5 text-blue-400 flex-shrink-0" />
             <input
               ref={inputRef}
               type="text"
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder={t('search.fullText.placeholder')}
-              className="flex-1 bg-transparent border-0 outline-none text-base text-foreground placeholder:text-muted-foreground font-medium"
+              className="flex-1 bg-transparent border-none p-0 outline-none text-base font-medium text-foreground placeholder:text-muted-foreground"
             />
             {query && (
-              <button onClick={() => setQuery('')} className="p-1 hover:bg-[#2a2b36] rounded-md transition-colors">
+              <button
+                onClick={() => setQuery('')}
+                className="p-1 rounded-md hover:bg-[#2a2b36] transition-colors flex-shrink-0"
+                aria-label={t('search.clear')}
+              >
                 <X className="w-4 h-4 text-muted-foreground" />
               </button>
             )}
           </div>
-
-          {/* Filters Panel - Always Visible */}
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-1 bg-[#252636] p-1 rounded-lg border border-[#2a2b36]">
-                <button
-                  onClick={() => setRoleFilter('all')}
-                  className={`px-3 py-1.5 text-xs rounded-md transition-all flex items-center gap-1.5 ${roleFilter === 'all' ? 'bg-blue-500 text-white shadow-lg' : 'text-muted-foreground hover:text-foreground hover:bg-[#2a2b36]'}`}
-                >
-                  <div className="flex -space-x-1">
-                    <User className="w-3 h-3" />
-                    <Bot className="w-3 h-3" />
-                  </div>
-                  {t('search.fullText.role.all')} (用户+助手)
-                </button>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex bg-[#252636]/50 p-1 rounded-lg border border-[#2a2b36]/50">
+              <button
+                onClick={() => setRoleFilter('all')}
+                className={`px-3 py-1.5 text-xs rounded-md transition-all flex items-center gap-1 ${
+                  roleFilter === 'all'
+                    ? 'bg-blue-500/90 text-white shadow-md shadow-blue-500/25'
+                    : 'text-muted-foreground hover:bg-[#2a2b36] hover:text-foreground'
+                }`}
+              >
+                <div className="flex -space-x-1">
+                  <User className="w-3 h-3 flex-shrink-0" />
+                  <Bot className="w-3 h-3 flex-shrink-0" />
+                </div>
+                {t('search.fullText.role.all')}
+              </button>
               <button
                 onClick={() => setRoleFilter('user')}
-                className={`px-3 py-1.5 text-xs rounded-md transition-all flex items-center gap-1.5 ${roleFilter === 'user' ? 'bg-blue-500 text-white shadow-lg' : 'text-muted-foreground hover:text-foreground hover:bg-[#2a2b36]'}`}
+                className={`px-3 py-1.5 text-xs rounded-md transition-all flex items-center gap-1 ${
+                  roleFilter === 'user'
+                    ? 'bg-blue-500/90 text-white shadow-md shadow-blue-500/25'
+                    : 'text-muted-foreground hover:bg-[#2a2b36] hover:text-foreground'
+                }`}
               >
-                <User className="w-3 h-3" />
+                <User className="w-3 h-3 flex-shrink-0" />
                 {t('search.fullText.role.user')}
               </button>
               <button
                 onClick={() => setRoleFilter('assistant')}
-                className={`px-3 py-1.5 text-xs rounded-md transition-all flex items-center gap-1.5 ${roleFilter === 'assistant' ? 'bg-blue-500 text-white shadow-lg' : 'text-muted-foreground hover:text-foreground hover:bg-[#2a2b36]'}`}
+                className={`px-3 py-1.5 text-xs rounded-md transition-all flex items-center gap-1 ${
+                  roleFilter === 'assistant'
+                    ? 'bg-blue-500/90 text-white shadow-md shadow-blue-500/25'
+                    : 'text-muted-foreground hover:bg-[#2a2b36] hover:text-foreground'
+                }`}
               >
-                <Bot className="w-3 h-3" />
+                <Bot className="w-3 h-3 flex-shrink-0" />
                 {t('search.fullText.role.assistant')}
               </button>
             </div>
-
-            <div className="flex-1 min-w-[240px] relative">
-              <Globe className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            <div className="flex-1 min-w-[200px] relative">
+              <Globe className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/70" />
               <input
                 type="text"
                 value={globPattern}
                 onChange={e => setGlobPattern(e.target.value)}
                 placeholder={t('search.fullText.globPlaceholder')}
-                className="w-full pl-8 pr-3 py-1.5 bg-[#252636] border border-[#2a2b36] rounded-lg text-xs outline-none focus:border-blue-500/50 transition-colors placeholder:text-muted-foreground/50 text-foreground"
+                className="w-full pl-10 pr-4 py-2 bg-[#252636] border border-[#2a2b36]/50 rounded-lg text-sm focus:border-blue-400/50 focus:ring-1 focus:ring-blue-400/20 transition-all placeholder:text-muted-foreground/70"
               />
             </div>
+            <button
+              onClick={cycleSort}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border font-medium transition-all ${
+                sortMode === 'score'
+                  ? 'bg-gradient-to-r from-blue-500/10 to-indigo-500/10 border-blue-400/30 text-blue-300 shadow-sm shadow-blue-500/10'
+                  : 'bg-[#252636]/50 border-[#2a2b36]/50 text-muted-foreground hover:border-blue-400/30 hover:text-blue-300 hover:bg-blue-500/5'
+              }`}
+              title={t('search.fullText.sortTitle')}
+            >
+              <ArrowUpDown className="w-3.5 h-3.5" />
+              <span className="font-normal">{getSortLabel()}</span>
+            </button>
           </div>
         </div>
-
-        {/* Results Info */}
-        <div className="px-4 py-2 bg-[#1a1b26] border-b border-[#2a2b36] flex items-center justify-between">
-          <div className="text-[11px] text-muted-foreground">
+        <div className="px-4 py-2 border-b border-[#2a2b36]/50 bg-[#1a1b26]/50 flex items-center justify-between text-xs">
+          <div className="text-muted-foreground/90 font-medium">
             {isSearching ? (
-              <div className="flex items-center gap-2">
-                <Loader2 className="w-3 h-3 animate-spin text-blue-400" />
-                <span>{t('search.searching')}</span>
-              </div>
-            ) : (
-              <span>{t('search.fullText.resultsFound', { count: totalHits })}</span>
-            )}
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400 mr-1.5 inline" />
+                {t('search.searching')}
+              </>
+            ) : totalHitsCount > 0 ? (
+              t('search.fullText.resultsFound', { count: totalHitsCount })
+            ) : null}
           </div>
-          <div className="flex items-center gap-2 text-[10px] text-muted-foreground/50">
-            <kbd className="px-1.5 py-0.5 bg-[#252636] border border-[#2a2b36] rounded text-[9px] font-mono uppercase tracking-wider">ESC</kbd>
+          <div className="text-muted-foreground/60 flex items-center gap-1.5">
+            <kbd className="px-1.5 py-0.5 bg-muted/30 border rounded-sm text-xs font-mono tracking-wider uppercase">
+              Esc
+            </kbd>
             <span>{t('common.close')}</span>
           </div>
         </div>
-
-        {/* Results List */}
-        <div className="flex-1 overflow-y-auto p-2 min-h-0 custom-scrollbar bg-[#16161e]">
-          {error ? (
-            <div className="h-40 flex flex-col items-center justify-center text-red-400/80 bg-red-500/5 rounded-lg m-2 border border-red-500/10">
-              <div className="p-3 bg-red-500/10 rounded-full mb-3">
-                <X className="w-6 h-6" />
+        <div className="flex-1 min-h-0 overflow-hidden bg-[#16161e]/50">
+          <div className="flex flex-col h-full overflow-y-auto p-4 space-y-2 custom-scrollbar">
+            {error ? (
+              <div className="flex flex-col items-center justify-center p-8 text-center text-red-400 bg-red-500/5 border border-red-500/20 rounded-xl">
+                <X className="w-12 h-12 mb-4 opacity-50" />
+                <p className="text-sm font-medium">{error}</p>
               </div>
-              <p className="text-sm font-medium">{error}</p>
-            </div>
-          ) : results.length > 0 ? (
-            <div className="space-y-1">
-              {results.map((hit, idx) => (
-                <button
-                  key={`${hit.session_id}-${hit.entry_id}-${idx}`}
-                  onClick={() => handleSelect(hit)}
-                  className="w-full text-left p-3 rounded-lg hover:bg-[#252636] border border-transparent hover:border-[#3a3b46] transition-all group"
-                >
-                  <div className="flex items-start justify-between gap-3 mb-1.5">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <FileText className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
-                      <span className="text-sm font-medium truncate text-foreground/90 group-hover:text-blue-400 transition-colors">
-                        {hit.session_name || hit.session_path.split('/').pop()}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <span className={`px-1.5 py-0.5 rounded-[4px] text-[10px] font-bold uppercase tracking-widest border ${hit.role === 'user' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : 'bg-purple-500/10 text-purple-400 border-purple-500/20'}`}>
-                        {hit.role}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground/60 whitespace-nowrap font-mono">
-                        {new Date(hit.timestamp).toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-                  
-                  <div className="pl-5.5 relative">
-                    <div className="absolute left-1.5 top-1.5 bottom-1.5 w-0.5 bg-[#2a2b36] rounded-full group-hover:bg-blue-500/30 transition-colors" />
-                    <p className="text-xs text-muted-foreground/80 leading-relaxed line-clamp-3 italic bg-[#1a1b26]/50 p-2 rounded border border-transparent group-hover:border-[#2a2b36] transition-all">
-                      ...{highlightText(hit.snippet, query)}...
-                    </p>
-                  </div>
-
-                  <div className="mt-2 pl-5.5 flex items-center gap-1.5 text-[10px] text-muted-foreground/40 overflow-hidden">
-                    <span className="truncate max-w-[400px] font-mono">{hit.session_path}</span>
-                    <ChevronRight className="w-2.5 h-2.5 flex-shrink-0 opacity-50" />
-                    <span className="text-muted-foreground/60 font-mono">#{hit.entry_id.slice(0, 8)}</span>
-                  </div>
-                </button>
-              ))}
-              
-              {hasMore && (
-                <div className="p-4 flex justify-center">
-                  <button
-                    onClick={handleLoadMore}
-                    disabled={isSearching}
-                    className="px-6 py-2 bg-[#252636] hover:bg-[#2a2b36] border border-[#3a3b46] rounded-lg text-sm text-muted-foreground hover:text-foreground transition-all flex items-center gap-2 font-medium"
-                  >
-                    {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                    {t('common.loadMore')}
-                  </button>
+            ) : paginatedHits.length === 0 ? (
+              !isSearching && query ? (
+                <div className="flex flex-col items-center justify-center p-12 text-center text-muted-foreground/50">
+                  <Search className="w-16 h-16 mb-4 opacity-30" />
+                  <p className="text-lg font-medium mb-1">{t('search.noResults')}</p>
+                  <p className="text-sm">Try adjusting your search terms or filters</p>
                 </div>
-              )}
-            </div>
-          ) : !isSearching && query ? (
-            <div className="h-40 flex flex-col items-center justify-center text-muted-foreground/60">
-              <Search className="w-10 h-10 mb-3 opacity-20 text-blue-400" />
-              <p className="text-sm font-medium">{t('search.noResults')}</p>
-            </div>
-          ) : !isSearching && (
-            <div className="h-40 flex flex-col items-center justify-center text-muted-foreground/40">
-              <div className="relative mb-4">
-                <Search className="w-12 h-12 opacity-10" />
-                <Filter className="w-5 h-5 absolute -bottom-1 -right-1 opacity-20 text-blue-400" />
-              </div>
-              <p className="text-sm font-medium">{t('search.fullText.startTyping')}</p>
-            </div>
-          )}
+              ) : (
+                <div className="flex flex-col items-center justify-center p-12 text-center text-muted-foreground/30">
+                  <div className="relative w-20 h-20 mb-6">
+                    <Search className="w-20 h-20 opacity-20 absolute inset-0" />
+                    <Globe className="w-12 h-12 opacity-40 absolute inset-0 m-auto text-blue-400" />
+                  </div>
+                  <p className="text-lg font-medium mb-1">{t('search.fullText.startTyping')}</p>
+                </div>
+              )
+            ) : (
+              <>
+                {paginatedHits.map(hit => {
+                  const projectName = getProjectDirName(hit.session_path);
+                  const sessionName = hit.session_name || basename(hit.session_path) || 'Untitled';
+                  const count = sessionCounts.get(hit.session_id) || 1;
+                  return (
+                    <button
+                      key={hit.session_id + hit.entry_id}
+                      onClick={() => handleSelect(hit)}
+                      className="group relative w-full p-4 rounded-xl border border-transparent hover:border-blue-500/30 hover:bg-blue-500/5 transition-all duration-200 flex flex-col overflow-hidden shadow-sm hover:shadow-md hover:shadow-blue-500/10"
+                    >
+                      <div className="flex items-start justify-between mb-2">
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          <div className="p-1.5 rounded-lg bg-gradient-to-br from-blue-500/10 to-indigo-500/10 border border-blue-500/20 group-hover:shadow-inner shadow-sm flex-shrink-0">
+                            <FileText className="w-4 h-4 text-blue-400" />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 mb-0.5">
+                              <h3 className="text-sm font-semibold text-foreground truncate group-hover:text-blue-300 transition-colors">
+                                {`${projectName} / ${sessionName}`}
+                              </h3>
+                              {count > 1 && (
+                                <span className="px-2 py-0.5 bg-blue-500/15 text-blue-300 text-xs font-bold rounded-full border border-blue-500/30 ml-auto flex-shrink-0">
+                                  {count}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground/70">
+                              <span className={`px-1.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wide ${
+                                hit.role === 'user'
+                                  ? 'bg-gradient-to-r from-blue-500/20 to-blue-600/20 text-blue-300 border border-blue-500/30'
+                                  : 'bg-gradient-to-r from-purple-500/20 to-purple-600/20 text-purple-300 border border-purple-500/30'
+                              }`}>
+                                {hit.role.toUpperCase()}
+                              </span>
+                              <span className="font-mono whitespace-nowrap">{formatRelativeTime(hit.timestamp)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="relative pl-10 mb-3">
+                        <div className="absolute left-9 top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-muted/30 to-transparent group-hover:from-blue-400/30 group-hover:via-blue-400/60" />
+                        <p className="text-sm/6 text-muted-foreground leading-relaxed italic line-clamp-3 bg-[#1a1b26]/50 px-3 py-2 rounded-lg backdrop-blur-sm group-hover:bg-blue-500/5 group-hover:text-foreground/90 transition-all">
+                          …{highlightText(hit.snippet, query)}…
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 pl-10 text-xs text-muted-foreground/50 group-hover:text-muted-foreground/70 transition-colors">
+                        <span className="truncate font-mono text-foreground/80">{hit.session_path}</span>
+                        <ChevronRight className="w-3 h-3 opacity-50 flex-shrink-0" />
+                        <span className="font-mono bg-muted/30 px-1.5 py-0.5 rounded text-[10px]">#{hit.entry_id.slice(-8)}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+                {remainingToFetch > 0 && (
+                  <div className="pt-4 flex justify-center">
+                    <button
+                      onClick={handleLoadMore}
+                      disabled={isSearching}
+                      className="inline-flex items-center gap-2 px-8 py-3 bg-gradient-to-r from-blue-500/10 via-indigo-500/5 to-purple-500/10 border border-blue-500/20 backdrop-blur-sm rounded-xl text-sm font-semibold text-blue-300 hover:from-blue-500/20 hover:border-blue-400/40 hover:shadow-lg hover:shadow-blue-500/20 hover:scale-[1.02] transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
+                    >
+                      {isSearching && <Loader2 className="w-4 h-4 animate-spin" />}
+                      {t('common.loadMoreCount', { loadCount, remaining: remainingToFetch })}
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
       </div>
     </div>
-  )
+  );
 }

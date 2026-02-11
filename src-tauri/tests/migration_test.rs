@@ -145,7 +145,8 @@ fn test_database_corruption_recovery() {
         let open_init = |path: &std::path::Path| -> Result<Connection, String> {
             let conn = Connection::open(path).map_err(|e| e.to_string())?;
             // Simulate a failure that would happen on a malformed DB
-            conn.execute("PRAGMA schema_version", []).map_err(|e| e.to_string())?;
+            // Use query_row because PRAGMA schema_version returns a value
+            let _: i64 = conn.query_row("PRAGMA schema_version", [], |row| row.get(0)).map_err(|e| e.to_string())?;
             Ok(conn)
         };
 
@@ -157,7 +158,10 @@ fn test_database_corruption_recovery() {
         println!("Got error: '{}'", initial_err);
         if initial_err.contains("malformed") || initial_err.contains("disk image") || initial_err.contains("not a database") {
             fs::remove_file(&test_db_path).map_err(|err| err.to_string())?;
-            open_init(&test_db_path)
+            println!("Deleted corrupted file, reopening...");
+            let result = open_init(&test_db_path);
+            println!("Reopen result: {:?}", result);
+            result
         } else {
             Err(initial_err)
         }

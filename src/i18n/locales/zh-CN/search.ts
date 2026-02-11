@@ -20,9 +20,13 @@ export const search = {
     role: {
       all: '全部',
       user: '用户',
-      assistant: '助手',
+      assistant: 'AI',
     },
     globPlaceholder: '路径通配符 (如: **/src/**)',
     startTyping: '输入关键词开始全文搜索',
+    sortScore: '相关度',
+    sortNewest: '最新',
+    sortOldest: '最早',
+    sortTitle: '排序方式',
   },
 } as const

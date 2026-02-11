@@ -38,6 +38,8 @@ fn test_empty_query_returns_empty_results() {
         message_count: 1,
         first_message: "Hello world".to_string(),
         all_messages_text: "Hello world".to_string(),
+        user_messages_text: "Hello world".to_string(),
+        assistant_messages_text: String::new(),
         last_message: "Hello world".to_string(),
         last_message_role: "user".to_string(),
     }];
@@ -78,6 +80,8 @@ fn test_single_word_search() {
         message_count: 1,
         first_message: "Hello world".to_string(),
         all_messages_text: "Hello world, this is a test".to_string(),
+        user_messages_text: "Hello world, this is a test".to_string(),
+        assistant_messages_text: String::new(),
         last_message: "Hello world, this is a test".to_string(),
         last_message_role: "user".to_string(),
     }];
@@ -120,6 +124,8 @@ fn test_multiple_word_search() {
         message_count: 1,
         first_message: "Hello world".to_string(),
         all_messages_text: "Hello world, this is a test of search functionality".to_string(),
+        user_messages_text: "Hello world, this is a test of search functionality".to_string(),
+        assistant_messages_text: String::new(),
         last_message: "Hello world, this is a test of search functionality".to_string(),
         last_message_role: "user".to_string(),
     }];
@@ -161,6 +167,8 @@ fn test_name_search_mode() {
         message_count: 1,
         first_message: "Some content here".to_string(),
         all_messages_text: "Some content here".to_string(),
+        user_messages_text: "Some content here".to_string(),
+        assistant_messages_text: String::new(),
         last_message: "Some content here".to_string(),
         last_message_role: "user".to_string(),
     }];
@@ -203,7 +211,8 @@ fn test_role_filter() {
         message_count: 2,
         first_message: "User message with keyword".to_string(),
         all_messages_text: "User message with keyword Assistant message with keyword".to_string(),
-        last_message: "User message with keyword Assistant message with keyword".to_string(),
+        user_messages_text: "User message with keyword".to_string(),
+        assistant_messages_text: "Assistant message with keyword".to_string(),        last_message: "User message with keyword Assistant message with keyword".to_string(),
         last_message_role: "user".to_string(),
     }];
 
@@ -256,7 +265,8 @@ fn test_multiple_sessions() {
             message_count: 1,
             first_message: "Session about Rust programming".to_string(),
             all_messages_text: "Session about Rust programming".to_string(),
-        last_message: "Session about Rust programming".to_string(),
+        user_messages_text: "Session about Rust programming".to_string(),
+        assistant_messages_text: String::new(),        last_message: "Session about Rust programming".to_string(),
         last_message_role: "user".to_string(),
         },
         SessionInfo {
@@ -273,7 +283,8 @@ fn test_multiple_sessions() {
             message_count: 1,
             first_message: "Session about Python programming".to_string(),
             all_messages_text: "Session about Python programming".to_string(),
-        last_message: "Session about Python programming".to_string(),
+        user_messages_text: "Session about Python programming".to_string(),
+        assistant_messages_text: String::new(),        last_message: "Session about Python programming".to_string(),
         last_message_role: "user".to_string(),
         },
         SessionInfo {
@@ -290,7 +301,8 @@ fn test_multiple_sessions() {
             message_count: 1,
             first_message: "Session about JavaScript".to_string(),
             all_messages_text: "Session about JavaScript".to_string(),
-        last_message: "Session about JavaScript".to_string(),
+        user_messages_text: "Session about JavaScript".to_string(),
+        assistant_messages_text: String::new(),        last_message: "Session about JavaScript".to_string(),
         last_message_role: "user".to_string(),
         },
     ];
@@ -333,6 +345,8 @@ fn test_snippet_generation() {
         message_count: 1,
         first_message: long_text[..50].to_string(),
         all_messages_text: long_text.to_string(),
+        user_messages_text: long_text.to_string(),
+        assistant_messages_text: String::new(),
         last_message: long_text[..150].to_string(),
         last_message_role: "user".to_string(),
     }];
@@ -372,8 +386,10 @@ fn test_score_calculation() {
             message_count: 1,
             first_message: "test test test".to_string(),
             all_messages_text: "test test test".to_string(),
-        last_message: "test test test".to_string(),
-        last_message_role: "user".to_string(),
+            user_messages_text: "test test test".to_string(),
+            assistant_messages_text: String::new(),
+            last_message: "test test test".to_string(),
+            last_message_role: "user".to_string(),
         },
         SessionInfo {
             path: session2_path.clone(),
@@ -389,8 +405,10 @@ fn test_score_calculation() {
             message_count: 1,
             first_message: "test".to_string(),
             all_messages_text: "test".to_string(),
-        last_message: "test".to_string(),
-        last_message_role: "user".to_string(),
+            user_messages_text: "test".to_string(),
+            assistant_messages_text: String::new(),
+            last_message: "test".to_string(),
+            last_message_role: "user".to_string(),
         },
     ];
 
@@ -424,6 +442,8 @@ fn test_thinking_content() {
         message_count: 1,
         first_message: "Thinking...".to_string(),
         all_messages_text: "This is thinking content with keyword".to_string(),
+        user_messages_text: String::new(), // no user messages
+        assistant_messages_text: "This is thinking content with keyword".to_string(),
         last_message: "This is thinking content with keyword".to_string(),
         last_message_role: "user".to_string(),
     }];
@@ -469,6 +489,8 @@ fn test_special_characters() {
         message_count: 1,
         first_message: "Test with symbols".to_string(),
         all_messages_text: "Test with symbols: @#$%^&*()_+-=[]{}|;':\",./<>?".to_string(),
+        user_messages_text: "Test with symbols: @#$%^&*()_+-=[]{}|;':\",./<>?".to_string(),
+        assistant_messages_text: String::new(),
         last_message: "Test with symbols: @#$%^&*()_+-=[]{}|;':\",./<>?".to_string(),
         last_message_role: "user".to_string(),
     }];
@@ -506,6 +528,8 @@ fn test_unicode_search() {
         message_count: 1,
         first_message: "这是一个中文测试".to_string(),
         all_messages_text: "这是一个中文测试".to_string(),
+        user_messages_text: "这是一个中文测试".to_string(),
+        assistant_messages_text: String::new(),
         last_message: "这是一个中文测试".to_string(),
         last_message_role: "user".to_string(),
     }];

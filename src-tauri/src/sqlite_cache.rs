@@ -199,6 +199,10 @@ fn open_and_init_db(db_path: &Path, config: &Config) -> Result<Connection, Strin
         init_fts5(&conn)?;
         // Comprehensive schema check for message-level FTS
         ensure_message_fts_schema(&conn)?;
+    } else {
+        // FTS disabled: ensure no leftover triggers for both message-level and session-level
+        let _ = drop_message_entries_triggers(&conn);
+        let _ = drop_sessions_fts_triggers(&conn);
     }
 
     Ok(conn)
@@ -214,12 +218,26 @@ fn init_fts5(conn: &Connection) -> Result<(), String> {
 
     if columns.is_empty() || !columns.contains(&"user_messages_text".to_string()) {
         full_rebuild_fts(conn)?;
+    } else {
+        // Table exists, ensure it is auto-sync (content='sessions') and triggers are removed
+        let mut stmt_sql = conn.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='sessions_fts'")
+            .map_err(|e| e.to_string())?;
+        let sql: String = stmt_sql.query_row([], |row| row.get(0))
+            .map_err(|e| e.to_string())?;
+        let is_auto_sync = sql.contains("content='sessions'") || sql.contains("content=\"sessions\"");
+        if !is_auto_sync {
+            // legacy manual FTS, rebuild
+            full_rebuild_fts(conn)?;
+        } else {
+            // Auto-sync, but drop any leftover triggers from older versions
+            drop_sessions_fts_triggers(conn)?;
+        }
     }
 
     Ok(())
 }
 
-fn ensure_message_fts_schema(conn: &Connection) -> Result<(), String> {
+pub fn ensure_message_fts_schema(conn: &Connection) -> Result<(), String> {
     // Check if message_entries table exists and has required columns
     let mut stmt = conn.prepare("PRAGMA table_info(message_entries)").map_err(|e| format!("Failed to query message_entries schema: {}", e))?;
     let me_columns: Vec<String> = stmt.query_map([], |row| row.get(1))
@@ -268,6 +286,8 @@ fn ensure_message_fts_schema(conn: &Connection) -> Result<(), String> {
         conn.execute("INSERT INTO message_fts(message_fts) VALUES('rebuild')", [])
             .map_err(|e| format!("Failed to rebuild message_fts index: {}", e))?;
         info!("[FTS] Rebuilt message_fts index");
+        // Drop any auto-sync triggers; we will maintain the index manually.
+        drop_message_entries_triggers(conn)?;
         return Ok(());
     }
     
@@ -290,9 +310,126 @@ fn ensure_message_fts_schema(conn: &Connection) -> Result<(), String> {
         info!("[Migration] Recreated message_fts virtual table and rebuilt index");
     } else {
         debug!("[Schema] message_fts columns OK: {:?}", fts_columns);
-        // No triggers needed for content-bearing FTS5; automatic sync
+        // Check if it's using auto-sync with content='message_entries'
+        let mut stmt_sql = conn.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='message_fts'")
+            .map_err(|e| format!("Failed to query message_fts definition: {}", e))?;
+        let sql: String = stmt_sql.query_row([], |row| row.get(0))
+            .map_err(|e| format!("Failed to read message_fts sql: {}", e))?;
+        // Detect if content='message_entries' is present
+        let is_auto_sync = sql.contains("content='message_entries'") || sql.contains("content=\"message_entries\"");
+        if !is_auto_sync {
+            error!("[Migration] message_fts is manual (no content=). Converting to auto-sync...");
+            conn.execute("DROP TABLE IF EXISTS message_fts", [])
+                .map_err(|e| format!("Failed to drop manual message_fts: {}", e))?;
+            create_message_fts5(conn)?;
+            conn.execute("INSERT INTO message_fts(message_fts) VALUES('rebuild')", [])
+                .map_err(|e| format!("Failed to rebuild message_fts after conversion: {}", e))?;
+            info!("[Migration] Converted message_fts to auto-sync");
+        } else {
+            debug!("[Schema] message_fts already auto-sync");
+        }
     }
     
+    // Drop any triggers to avoid duplicate entries; we maintain FTS manually in this implementation.
+    drop_message_entries_triggers(conn)?;
+    
+    // Backfill message_entries if empty: ensures message-level FTS has data after migration or fresh install with existing sessions.
+    // This runs once when message_entries is empty but there are sessions in the DB.
+    match conn.query_row("SELECT COUNT(*) FROM message_entries", [], |row| row.get::<_, i64>(0)) {
+        Ok(0) => {
+            // Check if there are sessions to backfill from
+            if let Ok(sessions_count) = conn.query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get::<_, i64>(0)) {
+                if sessions_count > 0 {
+                    info!("[Migration] message_entries empty but {} sessions exist. Backfilling message entries from session files...", sessions_count);
+                    // Get all session paths
+                    let mut stmt = match conn.prepare("SELECT path FROM sessions") {
+                        Ok(stmt) => stmt,
+                        Err(e) => {
+                            error!("[Migration] Failed to prepare statement for session paths: {}", e);
+                            return Ok(());
+                        }
+                    };
+                    let paths: Vec<String> = match stmt.query_map([], |row| row.get(0)) {
+                        Ok(iter) => {
+                            let mut vec = Vec::new();
+                            for row_result in iter {
+                                match row_result {
+                                    Ok(path) => vec.push(path),
+                                    Err(e) => error!("[Migration] Failed to read session path: {}", e),
+                                }
+                            }
+                            vec
+                        },
+                        Err(e) => {
+                            error!("[Migration] Failed to query session paths: {}", e);
+                            return Ok(());
+                        }
+                    };
+                    let total_paths = paths.len();
+                    // For each path, create a minimal SessionInfo and insert message entries
+                    let mut backfilled = 0;
+                    for path in &paths {
+                        let session = SessionInfo {
+                            path: path.clone(),
+                            id: String::new(),
+                            cwd: String::new(),
+                            name: None,
+                            created: Utc::now(),
+                            modified: Utc::now(),
+                            message_count: 0,
+                            first_message: String::new(),
+                            all_messages_text: String::new(),
+                            user_messages_text: String::new(),
+                            assistant_messages_text: String::new(),
+                            last_message: String::new(),
+                            last_message_role: String::new(),
+                        };
+                        if let Err(e) = insert_message_entries(conn, &session) {
+                            error!("[Migration] Failed to backfill messages for session {}: {}", path, e);
+                        } else {
+                            backfilled += 1;
+                        }
+                    }
+                    info!("[Migration] Backfilled message entries for {} sessions (attempted {})", backfilled, total_paths);
+
+                    // Rebuild FTS index to ensure it reflects the backfilled content
+                    info!("[Migration] Rebuilding message_fts index after backfill");
+                    if let Err(e) = conn.execute("INSERT INTO message_fts(message_fts) VALUES('rebuild')", []) {
+                        error!("[Migration] Failed to rebuild message_fts: {}", e);
+                    } else {
+                        info!("[Migration] Rebuilt message_fts index");
+                    }
+                }
+            }
+        },
+        Err(e) => {
+            error!("[Migration] Failed to check message_entries count: {}", e);
+        },
+        _ => {} // Non-zero count, nothing to do
+    }
+
+    Ok(())
+}
+
+fn drop_message_entries_triggers(conn: &Connection) -> Result<(), String> {
+    // Drop legacy manual triggers; with content='message_entries' auto-sync, they are not needed.
+    conn.execute("DROP TRIGGER IF EXISTS message_entries_ai", [])
+        .map_err(|e| format!("Failed to drop trigger message_entries_ai: {}", e))?;
+    conn.execute("DROP TRIGGER IF EXISTS message_entries_ad", [])
+        .map_err(|e| format!("Failed to drop trigger message_entries_ad: {}", e))?;
+    conn.execute("DROP TRIGGER IF EXISTS message_entries_au", [])
+        .map_err(|e| format!("Failed to drop trigger message_entries_au: {}", e))?;
+    Ok(())
+}
+
+fn drop_sessions_fts_triggers(conn: &Connection) -> Result<(), String> {
+    // Drop legacy manual triggers; with content='sessions' auto-sync, they are not needed.
+    conn.execute("DROP TRIGGER IF EXISTS sessions_ai", [])
+        .map_err(|e| format!("Failed to drop trigger sessions_ai: {}", e))?;
+    conn.execute("DROP TRIGGER IF EXISTS sessions_ad", [])
+        .map_err(|e| format!("Failed to drop trigger sessions_ad: {}", e))?;
+    conn.execute("DROP TRIGGER IF EXISTS sessions_au", [])
+        .map_err(|e| format!("Failed to drop trigger sessions_au: {}", e))?;
     Ok(())
 }
 
@@ -758,6 +895,9 @@ pub fn delete_message_entries_for_session(conn: &Connection, session_path: &str)
     match conn.execute("DELETE FROM message_entries WHERE session_path = ?", params![session_path]) {
         Ok(_) => {
             debug!("[Delete] Deleted message entries for session: {}", session_path);
+            // Also delete from message_fts (manual sync) if it exists
+            let _ = conn.execute("DELETE FROM message_fts WHERE session_path = ?", params![session_path])
+                .map_err(|e| debug!("[Delete] Failed to delete from message_fts: {}", e));
         }
         Err(e) => {
             let err_str = format!("{:?}", e);
@@ -825,6 +965,7 @@ pub fn insert_message_entries(conn: &Connection, session: &SessionInfo) -> Resul
                         }
                         
                         if !content.is_empty() {
+                            // Insert into message_entries
                             conn.execute(
                                 "INSERT OR REPLACE INTO message_entries (id, session_path, role, content, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
                                 params![
@@ -836,6 +977,12 @@ pub fn insert_message_entries(conn: &Connection, session: &SessionInfo) -> Resul
                                 ],
                             ).map_err(|e| format!("Failed to insert message entry (session: {}, entry: {}): {}", 
                                 session.path, entry_id, e))?;
+                            // Also insert into message_fts if it exists, to keep index in sync (auto-sync may be disabled)
+                            let rowid = conn.last_insert_rowid();
+                            let _ = conn.execute(
+                                "INSERT OR REPLACE INTO message_fts(rowid, session_path, role, content) VALUES (?1, ?2, ?3, ?4)",
+                                params![rowid, &session.path, role, &content],
+                            ).map_err(|_| format!("Failed to insert into message_fts (session: {}, entry: {})", session.path, entry_id));
                             inserted_count += 1;
                         }
                     }
@@ -862,10 +1009,10 @@ pub fn search_message_fts(
         return Ok(vec![]);
     }
     
-    // Format query for FTS5: use prefix matching with *
+    // Format query for FTS5: prefix matching with *
     let query_terms: Vec<&str> = clean_query.split_whitespace().collect();
     let formatted_terms = query_terms.iter()
-        .map(|term| format!("\"{}\"*", term))
+        .map(|term| format!("{}*", term))
         .collect::<Vec<String>>()
         .join(" OR ");
     
@@ -876,7 +1023,8 @@ pub fn search_message_fts(
         _ => ("content", "1=1"),
     };
     
-    let fts_query = format!("{}: ({})", fts_column, formatted_terms);
+    // Search across all columns (content and role). Role filtered separately.
+    let fts_query = formatted_terms;
     
     let sql = format!(
         "SELECT \
@@ -888,7 +1036,7 @@ pub fn search_message_fts(
             f.rank \
          FROM message_entries m \
          JOIN message_fts f ON m.rowid = f.rowid \
-         WHERE f.message_fts MATCH ? \
+         WHERE message_fts MATCH ? \
          AND {} \
          ORDER BY f.rank \
          LIMIT ?",
@@ -1009,6 +1157,7 @@ pub fn toggle_favorite(conn: &Connection, id: &str, favorite_type: &str, name: &
 
 pub fn full_rebuild_fts(conn: &Connection) -> Result<(), String> {
     conn.execute("DROP TABLE IF EXISTS sessions_fts", []).map_err(|e| e.to_string())?;
+    // Drop any legacy triggers (they will be removed with the table drop, but do it explicitly for safety)
     conn.execute("DROP TRIGGER IF EXISTS sessions_ai", []).map_err(|e| e.to_string())?;
     conn.execute("DROP TRIGGER IF EXISTS sessions_ad", []).map_err(|e| e.to_string())?;
     conn.execute("DROP TRIGGER IF EXISTS sessions_au", []).map_err(|e| e.to_string())?;
@@ -1029,31 +1178,7 @@ pub fn full_rebuild_fts(conn: &Connection) -> Result<(), String> {
         [],
     ).map_err(|e| format!("Failed to create FTS5 table: {}", e))?;
 
-    conn.execute(
-        "CREATE TRIGGER sessions_ai AFTER INSERT ON sessions BEGIN
-            INSERT INTO sessions_fts(rowid, path, cwd, name, first_message, all_messages_text, user_messages_text, assistant_messages_text)
-            VALUES (NEW.rowid, NEW.path, NEW.cwd, NEW.name, NEW.first_message, NEW.all_messages_text, NEW.user_messages_text, NEW.assistant_messages_text);
-        END",
-        [],
-    ).map_err(|e| format!("Failed to create FTS5 insert trigger: {}", e))?;
-
-    conn.execute(
-        "CREATE TRIGGER sessions_ad AFTER DELETE ON sessions BEGIN
-            INSERT INTO sessions_fts(sessions_fts, rowid, path, cwd, name, first_message, all_messages_text, user_messages_text, assistant_messages_text)
-            VALUES ('delete', OLD.rowid, OLD.path, OLD.cwd, OLD.name, OLD.first_message, OLD.all_messages_text, OLD.user_messages_text, OLD.assistant_messages_text);
-        END",
-        [],
-    ).map_err(|e| format!("Failed to create FTS5 delete trigger: {}", e))?;
-
-    conn.execute(
-        "CREATE TRIGGER sessions_au AFTER UPDATE ON sessions BEGIN
-            INSERT INTO sessions_fts(sessions_fts, rowid, path, cwd, name, first_message, all_messages_text, user_messages_text, assistant_messages_text)
-            VALUES ('delete', OLD.rowid, OLD.path, OLD.cwd, OLD.name, OLD.first_message, OLD.all_messages_text, OLD.user_messages_text, OLD.assistant_messages_text);
-            INSERT INTO sessions_fts(rowid, path, cwd, name, first_message, all_messages_text, user_messages_text, assistant_messages_text)
-            VALUES (NEW.rowid, NEW.path, NEW.cwd, NEW.name, NEW.first_message, NEW.all_messages_text, NEW.user_messages_text, NEW.assistant_messages_text);
-        END",
-        [],
-    ).map_err(|e| format!("Failed to create FTS5 update trigger: {}", e))?;
+    // No manual triggers: auto-sync maintains the index
 
     // Rebuild the index from existing sessions
     conn.execute("INSERT INTO sessions_fts(sessions_fts) VALUES('rebuild')", []).map_err(|e| e.to_string())?;
