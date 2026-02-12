@@ -21,10 +21,16 @@ export function useSessions(): UseSessionsReturn {
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const selectedSessionRef = useRef<SessionInfo | null>(null)
+  const sessionsRef = useRef<SessionInfo[]>([])
 
+  // Keep refs in sync with latest state
   useEffect(() => {
     selectedSessionRef.current = selectedSession
   }, [selectedSession])
+
+  useEffect(() => {
+    sessionsRef.current = sessions
+  }, [sessions])
 
   const loadSessions = useCallback(async (useFullScan: boolean = false) => {
     try {
@@ -38,44 +44,54 @@ export function useSessions(): UseSessionsReturn {
           loadedSessions = await invoke<SessionInfo[]>('get_cached_sessions')
         }
       }
-      setSessions(loadedSessions)
+      // Compare with current sessions to avoid unnecessary re-renders and scroll resets
+      const currentSessions = sessionsRef.current
+      const areEqual = loadedSessions.length === currentSessions.length &&
+        loadedSessions.every((s, i) => {
+          const old = currentSessions[i]
+          return old.path === s.path &&
+                 old.modified === s.modified &&
+                 old.name === s.name &&
+                 old.message_count === s.message_count
+        })
 
-      const currentSelection = selectedSessionRef.current
-      if (currentSelection) {
-        const matchedByPath = loadedSessions.find(s => s.path === currentSelection.path)
-        const matchedById = loadedSessions.find(s => s.id === currentSelection.id)
-        const matched = matchedByPath || matchedById
+      if (!areEqual) {
+        setSessions(loadedSessions)
 
-        if (matched) {
-          const pathChanged = matched.path !== currentSelection.path
-          const nameChanged = matched.name !== currentSelection.name
-          const hasChanges = pathChanged || nameChanged ||
-            matched.message_count !== currentSelection.message_count ||
-            matched.modified !== currentSelection.modified
+        // Update selected session if needed
+        const currentSelection = selectedSessionRef.current
+        if (currentSelection) {
+          const matchedByPath = loadedSessions.find(s => s.path === currentSelection.path)
+          const matchedById = loadedSessions.find(s => s.id === currentSelection.id)
+          const matched = matchedByPath || matchedById
 
-          if (!hasChanges) {
-            // No changes detected, keeping current selection stable
-          } else if (pathChanged || nameChanged) {
-            setSelectedSession(matched)
-          } else {
-            // Session metadata changed, updating silently
-            setSelectedSession(prev => {
-              if (!prev) return matched
-              return Object.assign(prev, matched)
-            })
-          }
-        } else {
-          try {
-            if (isDemoMode) {
-              // Demo mode doesn't need to check file existence
-              setSelectedSession(currentSelection)
-            } else {
-              await invoke('read_session_file', { path: currentSelection.path })
-              // Selected session file still readable but not in scan results, keeping selection
+          if (matched) {
+            const pathChanged = matched.path !== currentSelection.path
+            const nameChanged = matched.name !== currentSelection.name
+            const hasChanges = pathChanged || nameChanged ||
+              matched.message_count !== currentSelection.message_count ||
+              matched.modified !== currentSelection.modified
+
+            if (pathChanged || nameChanged) {
+              setSelectedSession(matched)
+            } else if (hasChanges) {
+              // Session metadata changed, updating silently
+              setSelectedSession(prev => {
+                if (!prev) return matched
+                return Object.assign(prev, matched)
+              })
             }
-          } catch (error) {
-            console.warn('[useSessions] Selected session file not readable, clearing selection:', error)
-            setSelectedSession(null)
+          } else {
+            try {
+              if (isDemoMode) {
+                setSelectedSession(currentSelection)
+              } else {
+                await invoke('read_session_file', { path: currentSelection.path })
+              }
+            } catch (error) {
+              console.warn('[useSessions] Selected session file not readable, clearing selection:', error)
+              setSelectedSession(null)
+            }
           }
         }
       }
