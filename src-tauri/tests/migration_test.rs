@@ -1,6 +1,6 @@
 use pi_session_manager::config::Config;
 use pi_session_manager::sqlite_cache;
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 use std::fs;
 use std::path::PathBuf;
 
@@ -206,4 +206,119 @@ fn test_database_corruption_recovery() {
     assert!(test_db_path.exists());
 
     fs::remove_file(&test_db_path).ok();
+}
+
+#[test]
+fn test_fts_vtable_corruption_triggers_database_recreation() {
+    // Use a temp directory to avoid interfering with real user data
+    use std::env;
+    use tempfile::tempdir;
+    use chrono::Utc;
+
+    let temp_dir = tempdir().unwrap();
+    let original_home = env::var("HOME").ok();
+    env::set_var("HOME", temp_dir.path());
+
+    // Ensure clean state: no DB
+    let db_path = pi_session_manager::sqlite_cache::get_db_path().unwrap();
+    let _ = std::fs::remove_file(&db_path);
+
+    let config = Config::default();
+
+    // First initialization: create DB with FTS and insert test data
+    {
+        let conn = pi_session_manager::sqlite_cache::init_db_with_config(&config)
+            .expect("first init should succeed");
+
+        // Insert a session and message to populate FTS
+        let session_path = "/test/session1.jsonl".to_string();
+        conn.execute(
+            "INSERT INTO sessions (id, path, cwd, created, modified, file_modified, message_count, first_message, all_messages_text, user_messages_text, assistant_messages_text, last_message, last_message_role, cached_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![
+                "s1",
+                &session_path,
+                "/cwd",
+                "2025-01-01T00:00:00Z",
+                "2025-01-01T00:00:00Z",
+                "2025-01-01T00:00:00Z",
+                1i64,
+                "hello",
+                "",
+                "",
+                "",
+                "",
+                "",
+                Utc::now().to_rfc3339(),
+            ],
+        ).unwrap();
+
+        // Insert message entry to populate message_entries and message_fts via auto-sync
+        conn.execute(
+            "INSERT INTO message_entries (id, session_path, role, content, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params!["m1", &session_path, "user", "hello world", "2025-01-01T00:00:00Z"]
+        ).unwrap();
+
+        // Verify FTS works before corruption
+        let results_before = pi_session_manager::sqlite_cache::search_message_fts(&conn, "hello", None, 10).unwrap();
+        assert_eq!(results_before.len(), 1);
+        assert_eq!(results_before[0].1, session_path);
+    }
+
+    // Corrupt the message_fts virtual table by dropping its shadow tables
+    {
+        let corrupt_conn = Connection::open(&db_path).unwrap();
+        // Drop shadow tables to simulate corruption
+        let _ = corrupt_conn.execute("DROP TABLE IF EXISTS message_fts_data", []);
+        let _ = corrupt_conn.execute("DROP TABLE IF EXISTS message_fts_idx", []);
+        let _ = corrupt_conn.execute("DROP TABLE IF EXISTS message_fts_docsize", []);
+        let _ = corrupt_conn.execute("DROP TABLE IF EXISTS message_fts_config", []);
+        drop(corrupt_conn);
+    }
+
+    // Second initialization: should detect corruption, delete the entire DB, and recreate fresh
+    let conn2 = pi_session_manager::sqlite_cache::init_db_with_config(&config)
+        .expect("init after corruption should succeed");
+
+    // Verify that the original session data is gone (DB was recreated)
+    let session_count: i64 = conn2.query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0)).unwrap();
+    assert_eq!(session_count, 0, "Sessions table should be empty after DB recreation");
+
+    // Verify that FTS can be used normally on the fresh DB by inserting new data
+    let new_session_path = "/test/session2.jsonl".to_string();
+    conn2.execute(
+        "INSERT INTO sessions (id, path, cwd, created, modified, file_modified, message_count, first_message, all_messages_text, user_messages_text, assistant_messages_text, last_message, last_message_role, cached_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        params![
+            "s2",
+            &new_session_path,
+            "/cwd2",
+            "2025-01-01T00:00:00Z",
+            "2025-01-01T00:00:00Z",
+            "2025-01-01T00:00:00Z",
+            1i64,
+            "new hello",
+            "",
+            "",
+            "",
+            "",
+            "",
+            Utc::now().to_rfc3339(),
+        ],
+    ).unwrap();
+
+    conn2.execute(
+        "INSERT INTO message_entries (id, session_path, role, content, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params!["m2", &new_session_path, "user", "new hello world", "2025-01-01T00:00:00Z"]
+    ).unwrap();
+
+    // Verify FTS works on the new data
+    let results_after = pi_session_manager::sqlite_cache::search_message_fts(&conn2, "new", None, 10).unwrap();
+    assert_eq!(results_after.len(), 1);
+    assert_eq!(results_after[0].1, new_session_path);
+
+    // Cleanup
+    if let Some(home) = original_home {
+        env::set_var("HOME", home);
+    } else {
+        env::remove_var("HOME");
+    }
 }
