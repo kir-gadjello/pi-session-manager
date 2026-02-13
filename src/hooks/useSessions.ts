@@ -52,7 +52,12 @@ export function useSessions(): UseSessionsReturn {
           return old.path === s.path &&
                  old.modified === s.modified &&
                  old.name === s.name &&
-                 old.message_count === s.message_count
+                 old.message_count === s.message_count &&
+                 old.first_message === s.first_message &&
+                 old.last_message === s.last_message &&
+                 old.last_message_role === s.last_message_role &&
+                 old.created === s.created &&
+                 old.cwd === s.cwd
         })
 
       if (!areEqual) {

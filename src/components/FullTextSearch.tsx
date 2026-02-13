@@ -119,12 +119,25 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
     };
   }, [query, roleFilter, globPattern, performSearch]);
 
+  // Memoization cache for highlighted HTML to avoid repeated string processing
+  const highlightCache = useRef<Map<string, string>>(new Map());
+
+  useEffect(() => {
+    // Clear cache when query changes
+    highlightCache.current.clear();
+  }, [query]);
+
   useEffect(() => setHitsPage(0), [sortMode]);
 
   // Infinite scroll: load more when sentinel enters viewport
   useEffect(() => {
-    if (!sentinelRef.current) return;
     const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    // Get the scroll container by ID (the element with #search-results-wrapper)
+    const scrollContainer = document.getElementById('search-results-wrapper');
+    const root = scrollContainer || sentinel.parentElement;
+
     const observer = new IntersectionObserver(
       (entries) => {
         const entry = entries[0];
@@ -133,7 +146,7 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
         }
       },
       {
-        root: sentinel.parentElement, // observe within scroll container
+        root,
         rootMargin: '200px',
         threshold: 0,
       }
@@ -226,8 +239,18 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
         className="w-full max-w-3xl bg-[#1a1b26] border border-[#2a2b36] rounded-xl shadow-2xl flex flex-col max-h-[80vh] overflow-hidden animate-in zoom-in-95 duration-200"
         onClick={e => e.stopPropagation()}
       >
-        <div className="p-4 border-b border-[#2a2b36] bg-[#1f2029]">
-          <div className="relative flex items-center gap-3 mb-4">
+        <div className="p-4 border-b border-[#2a2b36] bg-[#1f2029] relative">
+          {/* Close button - top right corner */}
+          <button
+            onClick={onClose}
+            className="absolute top-4 right-4 p-1.5 rounded-md hover:bg-[#2a2b36] transition-colors flex-shrink-0 z-10"
+            aria-label={t('common.close')}
+            title={t('common.close')}
+          >
+            <X className="w-5 h-5 text-muted-foreground hover:text-foreground" />
+          </button>
+
+          <div className="relative flex items-center gap-3 mb-4 pr-8">
             <Search className="w-5 h-5 text-blue-400 flex-shrink-0" />
             <input
               ref={inputRef}
@@ -362,6 +385,15 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
                   const projectName = getProjectDirName(hit.session_path);
                   const truncatedPath = shortenPath(hit.session_path, 60);
                   const count = sessionCounts.get(hit.session_id) || 1;
+
+                  // Memoized highlight rendering
+                  const cacheKey = `${hit.entry_id}|${query}`;
+                  let highlightedHtml = highlightCache.current.get(cacheKey);
+                  if (highlightedHtml === undefined) {
+                    highlightedHtml = highlightContent(hit.content, query);
+                    highlightCache.current.set(cacheKey, highlightedHtml);
+                  }
+
                   return (
                     <button
                       key={hit.session_id + hit.entry_id}
@@ -407,7 +439,7 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
                         <div className="absolute left-9 top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-muted/30 to-transparent group-hover:from-blue-400/30 group-hover:via-blue-400/60" />
                         <div
                           className="text-sm/6 text-muted-foreground leading-relaxed italic line-clamp-3 bg-[#1a1b26]/50 px-3 py-2 rounded-lg backdrop-blur-sm group-hover:bg-blue-500/5 group-hover:text-foreground/90 transition-all fts-snippet"
-                          dangerouslySetInnerHTML={{ __html: highlightContent(hit.content, query) }}
+                          dangerouslySetInnerHTML={{ __html: highlightedHtml }}
                         />
                       </div>
                     </button>
