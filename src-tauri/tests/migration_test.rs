@@ -1,5 +1,5 @@
-use pi_session_manager::sqlite_cache;
 use pi_session_manager::config::Config;
+use pi_session_manager::sqlite_cache;
 use rusqlite::Connection;
 use std::fs;
 use std::path::PathBuf;
@@ -29,7 +29,8 @@ fn test_database_migration_from_old_schema() {
                 cached_at TEXT NOT NULL
             )",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         // Old FTS5 table
         conn.execute(
@@ -43,7 +44,8 @@ fn test_database_migration_from_old_schema() {
                 content_rowid='rowid'
             )",
             [],
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     // 2. Run the current initialization logic
@@ -51,12 +53,12 @@ fn test_database_migration_from_old_schema() {
         enable_fts5: true,
         ..Default::default()
     };
-    
-    // We need to point sqlite_cache to our test DB. 
+
+    // We need to point sqlite_cache to our test DB.
     // Since get_db_path is hardcoded, we'll manually call the logic using our connection.
     {
         let conn = Connection::open(&test_db_path).unwrap();
-        
+
         // This is what init_db_with_config does:
         conn.execute(
             "CREATE TABLE IF NOT EXISTS sessions (
@@ -79,26 +81,46 @@ fn test_database_migration_from_old_schema() {
                 last_accessed TEXT
             )",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         // Run migrations
-        conn.execute("ALTER TABLE sessions ADD COLUMN last_message TEXT", []).ok();
-        conn.execute("ALTER TABLE sessions ADD COLUMN last_message_role TEXT", []).ok();
-        conn.execute("ALTER TABLE sessions ADD COLUMN user_messages_text TEXT", []).ok();
-        conn.execute("ALTER TABLE sessions ADD COLUMN assistant_messages_text TEXT", []).ok();
+        conn.execute("ALTER TABLE sessions ADD COLUMN last_message TEXT", [])
+            .ok();
+        conn.execute("ALTER TABLE sessions ADD COLUMN last_message_role TEXT", [])
+            .ok();
+        conn.execute(
+            "ALTER TABLE sessions ADD COLUMN user_messages_text TEXT",
+            [],
+        )
+        .ok();
+        conn.execute(
+            "ALTER TABLE sessions ADD COLUMN assistant_messages_text TEXT",
+            [],
+        )
+        .ok();
 
         // Check columns
         let mut stmt = conn.prepare("PRAGMA table_info(sessions)").unwrap();
-        let cols: Vec<String> = stmt.query_map([], |row| row.get(1)).unwrap().map(|r| r.unwrap()).collect();
+        let cols: Vec<String> = stmt
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
         assert!(cols.contains(&"user_messages_text".to_string()));
         assert!(cols.contains(&"assistant_messages_text".to_string()));
 
         // FTS upgrade logic (copied from init_fts5)
         let mut stmt = conn.prepare("PRAGMA table_info(sessions_fts)").unwrap();
-        let fts_cols: Vec<String> = stmt.query_map([], |row| row.get(1)).unwrap().map(|r| r.unwrap()).collect();
-        
+        let fts_cols: Vec<String> = stmt
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+
         if !fts_cols.is_empty() && !fts_cols.contains(&"user_messages_text".to_string()) {
-            conn.execute("DROP TABLE IF EXISTS sessions_fts", []).unwrap();
+            conn.execute("DROP TABLE IF EXISTS sessions_fts", [])
+                .unwrap();
         }
 
         conn.execute(
@@ -115,10 +137,15 @@ fn test_database_migration_from_old_schema() {
                 tokenize='unicode61'
             )",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut stmt = conn.prepare("PRAGMA table_info(sessions_fts)").unwrap();
-        let new_fts_cols: Vec<String> = stmt.query_map([], |row| row.get(1)).unwrap().map(|r| r.unwrap()).collect();
+        let new_fts_cols: Vec<String> = stmt
+            .query_map([], |row| row.get(1))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
         assert!(new_fts_cols.contains(&"user_messages_text".to_string()));
     }
 
@@ -138,15 +165,17 @@ fn test_database_corruption_recovery() {
     // 2. Try to initialize it using the recovery logic
     // Note: since we can't easily mock get_db_path without changing the source,
     // we'll manually test the recovery pattern used in init_db_with_config
-    
+
     let config = Config::default();
-    
+
     let result = (|| -> Result<Connection, String> {
         let open_init = |path: &std::path::Path| -> Result<Connection, String> {
             let conn = Connection::open(path).map_err(|e| e.to_string())?;
             // Simulate a failure that would happen on a malformed DB
             // Use query_row because PRAGMA schema_version returns a value
-            let _: i64 = conn.query_row("PRAGMA schema_version", [], |row| row.get(0)).map_err(|e| e.to_string())?;
+            let _: i64 = conn
+                .query_row("PRAGMA schema_version", [], |row| row.get(0))
+                .map_err(|e| e.to_string())?;
             Ok(conn)
         };
 
@@ -156,7 +185,10 @@ fn test_database_corruption_recovery() {
         };
 
         println!("Got error: '{}'", initial_err);
-        if initial_err.contains("malformed") || initial_err.contains("disk image") || initial_err.contains("not a database") {
+        if initial_err.contains("malformed")
+            || initial_err.contains("disk image")
+            || initial_err.contains("not a database")
+        {
             fs::remove_file(&test_db_path).map_err(|err| err.to_string())?;
             println!("Deleted corrupted file, reopening...");
             let result = open_init(&test_db_path);
@@ -167,8 +199,11 @@ fn test_database_corruption_recovery() {
         }
     })();
 
-    assert!(result.is_ok(), "Should recover from corrupted file by deleting and recreating it");
+    assert!(
+        result.is_ok(),
+        "Should recover from corrupted file by deleting and recreating it"
+    );
     assert!(test_db_path.exists());
-    
+
     fs::remove_file(&test_db_path).ok();
 }

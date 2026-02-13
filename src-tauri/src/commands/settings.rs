@@ -66,9 +66,7 @@ pub struct AdvancedSettings {
 
 fn get_app_settings_path() -> Result<std::path::PathBuf, String> {
     let config_dir = dirs::config_dir().ok_or("Failed to get config directory")?;
-    Ok(config_dir
-        .join("pi-session-manager")
-        .join("settings.json"))
+    Ok(config_dir.join("pi-session-manager").join("settings.json"))
 }
 
 impl Default for AppSettings {
@@ -125,8 +123,8 @@ pub async fn load_app_settings() -> Result<AppSettings, String> {
         return Ok(AppSettings::default());
     }
 
-    let content =
-        fs::read_to_string(&settings_path).map_err(|e| format!("Failed to read settings: {}", e))?;
+    let content = fs::read_to_string(&settings_path)
+        .map_err(|e| format!("Failed to read settings: {}", e))?;
 
     serde_json::from_str(&content).map_err(|e| format!("Failed to parse settings: {}", e))
 }

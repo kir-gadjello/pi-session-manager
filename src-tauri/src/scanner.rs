@@ -31,11 +31,14 @@ pub async fn scan_sessions_with_config(config: &Config) -> Result<Vec<SessionInf
     let entries = fs::read_dir(&sessions_dir)
         .map_err(|e| format!("Failed to read sessions directory: {}", e))?;
 
-    let process_entry = |conn: &rusqlite::Connection, path: PathBuf| -> Result<Option<SessionInfo>, String> {
+    let process_entry = |conn: &rusqlite::Connection,
+                         path: PathBuf|
+     -> Result<Option<SessionInfo>, String> {
         if path.extension().map(|ext| ext == "jsonl").unwrap_or(false) {
             let path_str = path.to_string_lossy().to_string();
             let metadata = fs::metadata(&path).map_err(|e| e.to_string())?;
-            let file_modified: DateTime<Utc> = DateTime::from(metadata.modified().unwrap_or(std::time::SystemTime::now()));
+            let file_modified: DateTime<Utc> =
+                DateTime::from(metadata.modified().unwrap_or(std::time::SystemTime::now()));
 
             if file_modified > realtime_cutoff {
                 if let Ok(info) = parse_session_info(&path) {
@@ -43,7 +46,9 @@ pub async fn scan_sessions_with_config(config: &Config) -> Result<Vec<SessionInf
                     return Ok(Some(info));
                 }
             } else {
-                let should_reparse = if let Some(cached_mtime) = sqlite_cache::get_cached_file_modified(conn, &path_str)? {
+                let should_reparse = if let Some(cached_mtime) =
+                    sqlite_cache::get_cached_file_modified(conn, &path_str)?
+                {
                     file_modified > cached_mtime || sqlite_cache::needs_reindexing(conn, &path_str)?
                 } else {
                     true
@@ -65,12 +70,15 @@ pub async fn scan_sessions_with_config(config: &Config) -> Result<Vec<SessionInf
             if let Ok(files) = fs::read_dir(&path) {
                 for file in files.flatten() {
                     let file_path = file.path();
-                    
+
                     // Retry loop for corruption recovery
                     let mut retries = 0;
                     loop {
                         if retries > 1 {
-                            eprintln!("Failed to process session {} after retry", file_path.display());
+                            eprintln!(
+                                "Failed to process session {} after retry",
+                                file_path.display()
+                            );
                             break;
                         }
 
@@ -79,23 +87,31 @@ pub async fn scan_sessions_with_config(config: &Config) -> Result<Vec<SessionInf
                             Ok(Some(info)) => {
                                 sessions.push(info);
                                 break;
-                            },
+                            }
                             Ok(None) => break,
-                            Err(e) if e.contains("malformed") || e.contains("disk image") || e.contains("not a database") => {
+                            Err(e)
+                                if e.contains("malformed")
+                                    || e.contains("disk image")
+                                    || e.contains("not a database") =>
+                            {
                                 eprintln!("[Scanner] Database corruption detected during scan: {}. Resetting...", e);
                                 drop(conn_opt.take()); // Drop connection
-                                
+
                                 // Get DB path to delete it
                                 if let Ok(db_path) = sqlite_cache::get_db_path() {
                                     fs::remove_file(&db_path).ok();
                                 }
-                                
+
                                 // Re-init
                                 conn_opt = Some(sqlite_cache::init_db_with_config(config)?);
                                 retries += 1;
-                            },
+                            }
                             Err(e) => {
-                                eprintln!("Error processing session {}: {}", file_path.display(), e);
+                                eprintln!(
+                                    "Error processing session {}: {}",
+                                    file_path.display(),
+                                    e
+                                );
                                 break;
                             }
                         }
@@ -108,9 +124,11 @@ pub async fn scan_sessions_with_config(config: &Config) -> Result<Vec<SessionInf
     // Historical sessions loading with retry
     let mut retries = 0;
     loop {
-        if retries > 1 { break; }
+        if retries > 1 {
+            break;
+        }
         let conn = conn_opt.as_ref().ok_or("Database connection lost")?;
-        
+
         match sqlite_cache::get_sessions_modified_before(conn, realtime_cutoff) {
             Ok(historical_sessions) => {
                 for session in historical_sessions {
@@ -119,16 +137,23 @@ pub async fn scan_sessions_with_config(config: &Config) -> Result<Vec<SessionInf
                     }
                 }
                 break;
-            },
-            Err(e) if e.contains("malformed") || e.contains("disk image") || e.contains("not a database") => {
-                eprintln!("[Scanner] Database corruption loading history: {}. Resetting...", e);
+            }
+            Err(e)
+                if e.contains("malformed")
+                    || e.contains("disk image")
+                    || e.contains("not a database") =>
+            {
+                eprintln!(
+                    "[Scanner] Database corruption loading history: {}. Resetting...",
+                    e
+                );
                 drop(conn_opt.take());
                 if let Ok(db_path) = sqlite_cache::get_db_path() {
                     fs::remove_file(&db_path).ok();
                 }
                 conn_opt = Some(sqlite_cache::init_db_with_config(config)?);
                 retries += 1;
-            },
+            }
             Err(e) => {
                 eprintln!("Error loading historical sessions: {}", e);
                 break;
@@ -136,14 +161,22 @@ pub async fn scan_sessions_with_config(config: &Config) -> Result<Vec<SessionInf
         }
     }
 
-    sessions.sort_by(|a, b| b.modified.cmp(&a.modified));
+    // Stable sort: by modified descending, then by path ascending to guarantee deterministic order
+    sessions.sort_by(|a, b| b.modified.cmp(&a.modified).then(a.path.cmp(&b.path)));
 
-    let realtime_count = sessions.iter().filter(|s| s.modified > realtime_cutoff).count();
+    let realtime_count = sessions
+        .iter()
+        .filter(|s| s.modified > realtime_cutoff)
+        .count();
     let historical_count = sessions.len() - realtime_count;
 
     eprintln!(
         "Scan complete: {} realtime (≤{}d), {} historical (>{}d), total {}",
-        realtime_count, config.realtime_cutoff_days, historical_count, config.realtime_cutoff_days, sessions.len()
+        realtime_count,
+        config.realtime_cutoff_days,
+        historical_count,
+        config.realtime_cutoff_days,
+        sessions.len()
     );
 
     Ok(sessions)
@@ -152,18 +185,18 @@ pub async fn scan_sessions_with_config(config: &Config) -> Result<Vec<SessionInf
 /// 解析会话信息
 /// 优化：使用 BufReader 流式读取，减少大文件内存占用
 pub fn parse_session_info(path: &Path) -> Result<SessionInfo, String> {
-    let file = fs::File::open(path)
-        .map_err(|e| format!("Failed to open file: {}", e))?;
+    let file = fs::File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
     let reader = BufReader::new(file);
     let mut lines = reader.lines();
 
     // 读取并解析头部
-    let header_line = lines.next()
+    let header_line = lines
+        .next()
         .ok_or("Empty session file")?
         .map_err(|e| format!("Failed to read header: {}", e))?;
 
-    let header: Value = serde_json::from_str(&header_line)
-        .map_err(|e| format!("Failed to parse header: {}", e))?;
+    let header: Value =
+        serde_json::from_str(&header_line).map_err(|e| format!("Failed to parse header: {}", e))?;
 
     if header["type"] != "session" {
         return Err("Invalid session header".to_string());
@@ -174,9 +207,12 @@ pub fn parse_session_info(path: &Path) -> Result<SessionInfo, String> {
     let timestamp_str = header["timestamp"].as_str().unwrap_or("");
     let created = parse_timestamp(timestamp_str)?;
 
-    let metadata = fs::metadata(path)
-        .map_err(|e| format!("Failed to get metadata: {}", e))?;
-    let modified = DateTime::from(metadata.modified().map_err(|e| format!("Failed to get modified time: {}", e))?);
+    let metadata = fs::metadata(path).map_err(|e| format!("Failed to get metadata: {}", e))?;
+    let modified = DateTime::from(
+        metadata
+            .modified()
+            .map_err(|e| format!("Failed to get modified time: {}", e))?,
+    );
 
     let mut message_count = 0;
     let mut first_message = String::new();

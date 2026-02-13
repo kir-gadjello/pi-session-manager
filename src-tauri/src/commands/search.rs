@@ -1,4 +1,4 @@
-use crate::models::{SessionInfo, FullTextSearchHit, FullTextSearchResponse};
+use crate::models::{FullTextSearchHit, FullTextSearchResponse, SessionInfo};
 use crate::{config, search, sqlite_cache};
 use chrono::{DateTime, Utc};
 use rusqlite::ToSql;
@@ -59,14 +59,14 @@ pub async fn full_text_search(
 ) -> Result<FullTextSearchResponse, String> {
     let config = config::load_config()?;
     let conn = sqlite_cache::init_db_with_config(&config)?;
-    
+
     // Determine role filter for message FTS
     let role_opt = match role_filter.as_str() {
         "user" => Some("user"),
         "assistant" => Some("assistant"),
         _ => None,
     };
-    
+
     // Escape query safely for FTS5 (treat as a phrase)
     let trimmed = query.trim();
     if trimmed.is_empty() {
@@ -85,7 +85,7 @@ pub async fn full_text_search(
         }
     }
     let fts_query = format!("\"{}\"", escaped);
-    
+
     // Build the base WHERE clause for FTS and role filter
     let role_condition = match role_opt {
         Some("user") => "m.role = 'user'",
@@ -95,7 +95,7 @@ pub async fn full_text_search(
     let mut where_clause = format!("WHERE message_fts MATCH ? AND {}", role_condition);
     let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();
     params.push(&fts_query);
-    
+
     // Include glob pattern if provided
     if let Some(pattern_str) = &glob_pattern {
         if !pattern_str.is_empty() {
@@ -103,7 +103,7 @@ pub async fn full_text_search(
             params.push(pattern_str as &dyn ToSql);
         }
     }
-    
+
     // --- Count total hits after per-session limit (max 3 per session) ---
     let count_sql = format!(
         "SELECT COUNT(*) FROM (
@@ -116,9 +116,10 @@ pub async fn full_text_search(
         )",
         where_clause
     );
-    
+
     let total_hits: usize = {
-        let mut stmt = conn.prepare(&count_sql)
+        let mut stmt = conn
+            .prepare(&count_sql)
             .map_err(|e| format!("Failed to prepare total count query: {}", e))?;
         let count: i64 = match stmt.query_row(params.as_slice(), |row| row.get(0)) {
             Ok(c) => c,
@@ -126,7 +127,7 @@ pub async fn full_text_search(
         };
         count as usize
     };
-    
+
     // --- Fetch the page of hits with global ordering and per-session limit ---
     let offset = page * page_size;
     let limit = page_size;
@@ -157,35 +158,37 @@ pub async fn full_text_search(
         ORDER BY f.rank",
         where_clause
     );
-    
+
     // Prepare parameters for data query: base params (fts_query, optional glob) plus offset and limit for global_rn
     let offset_i64 = offset as i64;
     let limit_i64 = (offset + limit) as i64;
     let mut data_params: Vec<&dyn rusqlite::ToSql> = params.clone();
     data_params.push(&offset_i64);
     data_params.push(&limit_i64);
-    
-    let mut stmt = conn.prepare(&data_sql)
+
+    let mut stmt = conn
+        .prepare(&data_sql)
         .map_err(|e| format!("Failed to prepare data query: {}", e))?;
-    
-    let rows = stmt.query_map(data_params.as_slice(), |row| {
-        Ok((
-            row.get::<_, String>(0)?, // entry_id
-            row.get::<_, String>(1)?, // session_path
-            row.get::<_, String>(2)?, // role
-            row.get::<_, String>(3)?, // content
-            row.get::<_, String>(4)?, // timestamp
-            row.get::<_, f32>(5)?,    // rank
-        ))
-    })
-    .map_err(|e| format!("Failed to query message FTS: {}", e))?
-    .collect::<Result<Vec<_>, _>>()
-    .map_err(|e| format!("Failed to collect message FTS results: {}", e))?;
-    
+
+    let rows = stmt
+        .query_map(data_params.as_slice(), |row| {
+            Ok((
+                row.get::<_, String>(0)?, // entry_id
+                row.get::<_, String>(1)?, // session_path
+                row.get::<_, String>(2)?, // role
+                row.get::<_, String>(3)?, // content
+                row.get::<_, String>(4)?, // timestamp
+                row.get::<_, f32>(5)?,    // rank
+            ))
+        })
+        .map_err(|e| format!("Failed to query message FTS: {}", e))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("Failed to collect message FTS results: {}", e))?;
+
     // Batch fetch session details and build hits
     let mut all_hits = Vec::new();
     let mut sessions_cache: HashMap<String, SessionInfo> = HashMap::new();
-    
+
     for (entry_id, session_path, role, content, timestamp_str, rank) in rows {
         // Get session from cache or DB
         let session = if let Some(sess) = sessions_cache.get(&session_path) {
@@ -196,16 +199,19 @@ pub async fn full_text_search(
         } else {
             continue;
         };
-        
+
         // Parse timestamp
         let timestamp = match chrono::DateTime::parse_from_rfc3339(&timestamp_str) {
             Ok(dt) => dt.with_timezone(&chrono::Utc),
             Err(e) => {
-                eprintln!("[FTS] Invalid timestamp '{}' for entry {}: {}", timestamp_str, entry_id, e);
+                eprintln!(
+                    "[FTS] Invalid timestamp '{}' for entry {}: {}",
+                    timestamp_str, entry_id, e
+                );
                 continue;
             }
         };
-        
+
         all_hits.push(FullTextSearchHit {
             session_id: session.id.clone(),
             session_path: session.path.clone(),
@@ -217,11 +223,11 @@ pub async fn full_text_search(
             score: rank,
         });
     }
-    
+
     // Rows are already ordered by global_rn, so all_hits is in correct order.
-    
+
     let has_more = (page + 1) * page_size < total_hits;
-    
+
     Ok(FullTextSearchResponse {
         hits: all_hits,
         total_hits,

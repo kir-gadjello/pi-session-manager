@@ -165,6 +165,21 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
     }
   }, [isOpen]);
 
+  // ESC key to close modal
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   const handleLoadMore = () => {
     const nextPage = hitsPage + 1;
     performSearch(query, roleFilter, globPattern, nextPage, true);

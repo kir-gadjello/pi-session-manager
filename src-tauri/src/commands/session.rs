@@ -60,7 +60,8 @@ pub async fn read_session_file_incremental(
 
 #[tauri::command]
 pub async fn get_file_stats(path: String) -> Result<FileStats, String> {
-    let metadata = fs::metadata(&path).map_err(|e| format!("Failed to get file metadata: {}", e))?;
+    let metadata =
+        fs::metadata(&path).map_err(|e| format!("Failed to get file metadata: {}", e))?;
 
     let modified = metadata
         .modified()
@@ -123,7 +124,11 @@ pub async fn delete_session(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn export_session(path: String, format: String, output_path: String) -> Result<(), String> {
+pub async fn export_session(
+    path: String,
+    format: String,
+    output_path: String,
+) -> Result<(), String> {
     export::export_session(&path, &format, &output_path).await
 }
 
@@ -163,7 +168,8 @@ pub async fn rename_session(path: String, new_name: String) -> Result<(), String
             "timestamp": chrono::Utc::now().to_rfc3339()
         });
         lines.push(
-            serde_json::to_string(&session_info).map_err(|e| format!("Failed to serialize: {}", e))?,
+            serde_json::to_string(&session_info)
+                .map_err(|e| format!("Failed to serialize: {}", e))?,
         );
     }
 
@@ -174,9 +180,7 @@ pub async fn rename_session(path: String, new_name: String) -> Result<(), String
 }
 
 #[tauri::command]
-pub async fn get_session_stats(
-    sessions: Vec<SessionInfo>,
-) -> Result<stats::SessionStats, String> {
+pub async fn get_session_stats(sessions: Vec<SessionInfo>) -> Result<stats::SessionStats, String> {
     Ok(stats::calculate_stats(&sessions))
 }
 

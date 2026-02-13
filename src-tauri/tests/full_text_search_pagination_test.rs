@@ -1,7 +1,7 @@
-use pi_session_manager::sqlite_cache;
-use pi_session_manager::scanner;
 use chrono::Utc;
-use rusqlite::{Connection, params};
+use pi_session_manager::scanner;
+use pi_session_manager::sqlite_cache;
+use rusqlite::{params, Connection};
 use std::fs;
 use tempfile::tempdir;
 
@@ -16,7 +16,10 @@ fn make_session_file(id: &str, cwd: &str, messages: &[(&str, &str)]) -> String {
         let entry_id = format!("{}-msg{}", id, i);
         let msg = format!(
             r#"{{"type":"message","id":"{}","parentId":null,"timestamp":"2026-02-10T22:00:{:02}Z","message":{{"role":"{}","content":[{{"type":"text","text":"{}"}}]}}}}"#,
-            entry_id, i, role, text.replace('"', "\\\"")
+            entry_id,
+            i,
+            role,
+            text.replace('"', "\\\"")
         );
         lines.push(msg);
     }
@@ -50,7 +53,9 @@ fn test_full_text_search_pagination_respects_per_session_limit() {
     let conn = Connection::open(&db_file).unwrap();
 
     // Initialize schema
-    let _: String = conn.query_row("PRAGMA journal_mode=WAL;", [], |row| row.get(0)).unwrap();
+    let _: String = conn
+        .query_row("PRAGMA journal_mode=WAL;", [], |row| row.get(0))
+        .unwrap();
     conn.execute("PRAGMA synchronous=NORMAL;", []).unwrap();
     conn.execute("PRAGMA foreign_keys=ON;", []).unwrap();
 
@@ -75,7 +80,8 @@ fn test_full_text_search_pagination_respects_per_session_limit() {
             last_accessed TEXT
         )",
         [],
-    ).unwrap();
+    )
+    .unwrap();
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS message_entries (
@@ -87,12 +93,14 @@ fn test_full_text_search_pagination_respects_per_session_limit() {
             FOREIGN KEY (session_path) REFERENCES sessions(path) ON DELETE CASCADE
         )",
         [],
-    ).unwrap();
+    )
+    .unwrap();
 
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_message_entries_session ON message_entries(session_path)",
         [],
-    ).unwrap();
+    )
+    .unwrap();
 
     sqlite_cache::ensure_message_fts_schema(&conn).unwrap();
 
@@ -140,11 +148,16 @@ fn test_full_text_search_pagination_respects_per_session_limit() {
     );
     let total_hits: usize = {
         let mut stmt = conn.prepare(&count_sql).unwrap();
-        let count: i64 = stmt.query_row(params![fts_query], |row| row.get(0)).unwrap();
+        let count: i64 = stmt
+            .query_row(params![fts_query], |row| row.get(0))
+            .unwrap();
         count as usize
     };
     // Only one session, 5 matching messages, but per-session limit is 3, so total = 3
-    assert_eq!(total_hits, 3, "Total hits after per-session limit should be 3");
+    assert_eq!(
+        total_hits, 3,
+        "Total hits after per-session limit should be 3"
+    );
 
     // Fetch first page (global offset=0, limit=3)
     let data_sql = format!(
@@ -190,7 +203,11 @@ fn test_full_text_search_pagination_respects_per_session_limit() {
         .unwrap();
 
     assert_eq!(rows.len(), 3, "First page should contain exactly 3 hits");
-    assert!(rows.iter().all(|(_, sp, _, _, _, _)| sp == &sess_path.to_string_lossy()));
+    assert!(rows
+        .iter()
+        .all(|(_, sp, _, _, _, _)| sp == &sess_path.to_string_lossy()));
     // Also verify that content is non-empty for each hit (basic sanity)
-    assert!(rows.iter().all(|(_, _, _, content, _, _)| !content.is_empty()));
+    assert!(rows
+        .iter()
+        .all(|(_, _, _, content, _, _)| !content.is_empty()));
 }

@@ -77,14 +77,9 @@ export function useSessions(): UseSessionsReturn {
               matched.message_count !== currentSelection.message_count ||
               matched.modified !== currentSelection.modified
 
-            if (pathChanged || nameChanged) {
+            if (hasChanges) {
+              // Replace the selected session with the fresh object to ensure UI updates
               setSelectedSession(matched)
-            } else if (hasChanges) {
-              // Session metadata changed, updating silently
-              setSelectedSession(prev => {
-                if (!prev) return matched
-                return Object.assign(prev, matched)
-              })
             }
           } else {
             try {

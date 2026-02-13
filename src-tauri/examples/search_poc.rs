@@ -63,7 +63,12 @@ fn main() {
     );
     println!("  结果数量: {}", results.len());
     for (i, result) in results.iter().enumerate() {
-        println!("  [{}] Session: {} (score: {})", i + 1, result.session_name.as_ref().unwrap_or(&"N/A".to_string()), result.score);
+        println!(
+            "  [{}] Session: {} (score: {})",
+            i + 1,
+            result.session_name.as_ref().unwrap_or(&"N/A".to_string()),
+            result.score
+        );
         println!("      First message: {}", result.first_message);
         println!("      Matches: {}", result.matches.len());
     }
@@ -80,7 +85,12 @@ fn main() {
     );
     println!("  结果数量: {}", results.len());
     for (i, result) in results.iter().enumerate() {
-        println!("  [{}] Session: {} (score: {})", i + 1, result.session_name.as_ref().unwrap_or(&"N/A".to_string()), result.score);
+        println!(
+            "  [{}] Session: {} (score: {})",
+            i + 1,
+            result.session_name.as_ref().unwrap_or(&"N/A".to_string()),
+            result.score
+        );
     }
     println!();
 
@@ -95,7 +105,12 @@ fn main() {
     );
     println!("  结果数量: {}", results.len());
     for (i, result) in results.iter().enumerate() {
-        println!("  [{}] Session: {} (score: {})", i + 1, result.session_name.as_ref().unwrap_or(&"N/A".to_string()), result.score);
+        println!(
+            "  [{}] Session: {} (score: {})",
+            i + 1,
+            result.session_name.as_ref().unwrap_or(&"N/A".to_string()),
+            result.score
+        );
     }
     println!();
 
@@ -134,7 +149,12 @@ fn main() {
     );
     println!("  结果数量: {}", results.len());
     for (i, result) in results.iter().enumerate() {
-        println!("  [{}] Session: {} (score: {})", i + 1, result.session_name.as_ref().unwrap_or(&"N/A".to_string()), result.score);
+        println!(
+            "  [{}] Session: {} (score: {})",
+            i + 1,
+            result.session_name.as_ref().unwrap_or(&"N/A".to_string()),
+            result.score
+        );
     }
     println!();
 

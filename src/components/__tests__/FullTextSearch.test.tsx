@@ -116,4 +116,22 @@ describe('FullTextSearch', () => {
 
     vi.useRealTimers();
   });
+
+  it('closes modal when ESC key is pressed, even when input is focused', async () => {
+    renderFullTextSearch(true);
+
+    // Verify modal is open
+    const overlay = document.querySelector('[class*="fixed inset-0"]');
+    expect(overlay).toBeInTheDocument();
+
+    // Focus the input
+    const input = screen.getByPlaceholderText(/full-text/i);
+    input.focus();
+
+    // Press ESC key on window
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    // onClose should have been called
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });

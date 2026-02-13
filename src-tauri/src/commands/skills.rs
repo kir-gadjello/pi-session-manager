@@ -159,8 +159,8 @@ pub async fn load_pi_settings() -> Result<PiSettings, String> {
         });
     }
 
-    let content =
-        fs::read_to_string(&settings_path).map_err(|e| format!("Failed to read settings: {}", e))?;
+    let content = fs::read_to_string(&settings_path)
+        .map_err(|e| format!("Failed to read settings: {}", e))?;
 
     let json: serde_json::Value =
         serde_json::from_str(&content).map_err(|e| format!("Failed to parse settings: {}", e))?;
