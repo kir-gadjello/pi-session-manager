@@ -150,14 +150,14 @@ pub async fn dispatch(command: &str, payload: &Value) -> Result<Value, String> {
 
         "full_text_search" => {
             let query = extract_string(payload, "query")?;
-            let role_filter = extract_string(payload, "roleFilter")?;
+            let role_filter = extract_string(payload, "role_filter")?;
             let glob_pattern = payload
-                .get("globPattern")
+                .get("glob_pattern")
                 .and_then(|v| v.as_str())
                 .map(String::from);
             let page = payload.get("page").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             let page_size = payload
-                .get("pageSize")
+                .get("page_size")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(20) as usize;
             let result =
