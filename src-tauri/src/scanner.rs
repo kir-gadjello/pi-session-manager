@@ -167,18 +167,8 @@ pub async fn scan_sessions_with_config(config: &Config) -> Result<Vec<SessionInf
                                     };
 
                                     if file_modified > realtime_cutoff {
-                                        if let Ok((info, entries)) = parse_session_info(&file_path)
+                                        if let Ok((info, _entries)) = parse_session_info(&file_path)
                                         {
-                                            // Upsert message entries for FTS
-                                            if let Err(e) = sqlite_cache::upsert_message_entries(
-                                                &conn, &info.path, &entries,
-                                            ) {
-                                                log::warn!(
-                                                    "Failed to upsert message entries for {}: {}",
-                                                    info.path,
-                                                    e
-                                                );
-                                            }
                                             sessions.push(info);
                                             write_buffer::buffer_session_write(
                                                 sessions.last().unwrap(),
@@ -189,34 +179,18 @@ pub async fn scan_sessions_with_config(config: &Config) -> Result<Vec<SessionInf
                                         sqlite_cache::get_cached_file_modified(&conn, &path_str)?
                                     {
                                         if file_modified > cached_mtime {
-                                            if let Ok((info, entries)) =
+                                            if let Ok((info, _entries)) =
                                                 parse_session_info(&file_path)
                                             {
-                                                // Upsert message entries for FTS
-                                                if let Err(e) = sqlite_cache::upsert_message_entries(
-                                                    &conn, &info.path, &entries,
-                                                ) {
-                                                    log::warn!("Failed to upsert message entries for {}: {}", info.path, e);
-                                                }
                                                 write_buffer::buffer_session_write(
                                                     &info,
                                                     file_modified,
                                                 );
                                             }
                                         }
-                                    } else if let Ok((info, entries)) =
+                                    } else if let Ok((info, _entries)) =
                                         parse_session_info(&file_path)
                                     {
-                                        // Upsert message entries for FTS
-                                        if let Err(e) = sqlite_cache::upsert_message_entries(
-                                            &conn, &info.path, &entries,
-                                        ) {
-                                            log::warn!(
-                                                "Failed to upsert message entries for {}: {}",
-                                                info.path,
-                                                e
-                                            );
-                                        }
                                         write_buffer::buffer_session_write(&info, file_modified);
                                     }
                                 }
@@ -463,7 +437,7 @@ pub async fn rescan_changed_files(changed_paths: Vec<String>) -> Result<Sessions
 
         match parse_session_info(&path) {
             Ok((info, entries)) => {
-                // Upsert message entries for FTS
+                // Upsert message entries for FTS (session already exists, safe)
                 if let Err(e) = sqlite_cache::upsert_message_entries(&conn, &info.path, &entries) {
                     log::warn!("Failed to upsert message entries for {}: {}", info.path, e);
                 }

@@ -115,11 +115,7 @@ impl ScannerScheduler {
             }
         }
 
-        if let Ok((info, entries)) = scanner::parse_session_info(file_path) {
-            // Upsert message entries for FTS
-            if let Err(e) = sqlite_cache::upsert_message_entries(conn, &info.path, &entries) {
-                log::warn!("Failed to upsert message entries for {}: {}", info.path, e);
-            }
+        if let Ok((info, _entries)) = scanner::parse_session_info(file_path) {
             sqlite_cache::upsert_session(conn, &info, file_modified)?;
             return Ok(if cached_mtime.is_some() {
                 FileUpdateResult::Updated
