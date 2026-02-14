@@ -19,7 +19,7 @@
 ## Phase 0: Setup & Baseline
 
 ### P0-1: Create integration branch and snapshot
-- [ ] `git checkout full-text-search`
+- [x] `git checkout full-text-search`
 - [ ] `git status` (verify clean)
 - [ ] `git checkout -b fts-integration-20250214`
 - [ ] Run baseline tests: `cargo test --locked > test_results_fts_baseline.txt 2>&1`
