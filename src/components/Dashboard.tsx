@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { useTranslation } from 'react-i18next'
 import { BarChart3, Clock, RefreshCw, Activity, Zap, DollarSign } from 'lucide-react'
-import type { SessionInfo, SessionStats, SessionStatsInput } from '../types'
+import type { SessionInfo, SessionStats } from '../types'
 import { getDemoStats } from '../hooks/useDemoMode'
 import StatCard from './dashboard/StatCard'
 import ActivityHeatmap from './dashboard/ActivityHeatmap'
@@ -79,23 +79,7 @@ export default function Dashboard({ sessions, onSessionSelect, projectName, load
         const result = getDemoStats()
         setStats(result)
       } else {
-        const statsSessions: SessionStatsInput[] = sessions.map((session) => ({
-          path: session.path,
-          cwd: session.cwd,
-          modified: session.modified,
-          message_count: session.message_count,
-        }))
-        let result: SessionStats
-        try {
-          result = await invoke<SessionStats>('get_session_stats_light', { sessions: statsSessions })
-        } catch (error: any) {
-          const message = typeof error === 'string' ? error : error?.message
-          if (message && String(message).includes('get_session_stats_light')) {
-            result = await invoke<SessionStats>('get_session_stats', { sessions })
-          } else {
-            throw error
-          }
-        }
+        const result = await invoke<SessionStats>('get_session_stats', { sessions })
         setStats(result)
       }
     } catch (error) {
@@ -141,6 +125,32 @@ export default function Dashboard({ sessions, onSessionSelect, projectName, load
       tokens_by_model: {},
     },
   }
+
+  const tokenValue = (() => {
+    const { total_input, total_output } = displayStats.token_details
+    const format = (n: number): string => {
+      if (n === 0) return '0'
+      if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`
+      if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
+      return n.toString()
+    }
+    const fInput = format(total_input)
+    const fOutput = format(total_output)
+    const total = total_input + total_output
+    const fTotal = format(total)
+
+    return (
+      <div className="flex flex-col items-start gap-0.5">
+        <div className="flex items-center gap-3 text-xs">
+          {total_input > 0 && <span className="text-[#569cd6]">↑{fInput}</span>}
+          {total_output > 0 && <span className="text-[#7ee787]">↓{fOutput}</span>}
+        </div>
+        <div className="bg-gradient-to-r from-[#c792ea] to-[#d4a8f0] bg-clip-text text-transparent font-bold">
+          {fTotal}
+        </div>
+      </div>
+    )
+  })()
 
   return (
     <div className="h-full overflow-y-auto p-4">
@@ -192,12 +202,7 @@ export default function Dashboard({ sessions, onSessionSelect, projectName, load
         <StatCard
           icon={Zap}
           label={t('components.displayStats.cards.totalTokens')}
-          value={displayStats.total_tokens > 1000000 
-            ? `${(displayStats.total_tokens / 1000000).toFixed(1)}M` 
-            : displayStats.total_tokens > 1000 
-              ? `${(displayStats.total_tokens / 1000).toFixed(1)}k`
-              : displayStats.total_tokens
-          }
+          value={tokenValue}
           color="#c792ea"
         />
         <StatCard

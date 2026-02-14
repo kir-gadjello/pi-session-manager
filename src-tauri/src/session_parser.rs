@@ -127,3 +127,5 @@ impl SessionDetails {
         self.user_messages + self.assistant_messages + self.tool_results + self.custom_messages
     }
 }
+
+
