@@ -492,13 +492,13 @@ Refer to `TODO.md` for the full task list and acceptance criteria.
 ## Phase 12: Final Validation Checklist
 
 ### P0-11: Merge conflict resolution final check
-- [ ] `git status` shows no unmerged files
-- [ ] `git diff --name-only origin/main...fts-integration-20250214` shows expected additions (FTS component, types, tests)
-- [ ] No accidental deletions of main features (kanban, terminal, tags)
+- [x] `git status` shows no unmerged files
+- [x] `git diff --name-only origin/main...fts-integration-20250214` shows expected additions (FTS component, types, tests)
+- [x] No accidental deletions of main features (kanban, terminal, tags)
 
 ### P0-12: Full test suite pass
-- [ ] `cargo test --locked` (Rust)
-- [ ] `npm run build` (frontend)
+- [x] `cargo test --locked` (Rust)
+- [x] `npm run build` (frontend)
 - [ ] `npm run tauri:dev` manual smoke test (open, FTS, kanban, terminal, tags)
 
 ### P0-13: Database migration test (critical)

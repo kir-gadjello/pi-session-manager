@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 import i18n from '../../i18n';
 import { I18nextProvider } from 'react-i18next';
 
+// Mock Tauri core API which is used by transport.ts
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }));
@@ -42,7 +43,7 @@ describe('FullTextSearch', () => {
           session_name: 'Test Session',
           role: 'user',
           timestamp: '2025-01-01T00:00:00Z',
-          snippet: 'This is a <b>test</b> snippet with highlights',
+          content: 'This is a test content with highlights',
           score: 1.0,
         },
       ],
@@ -51,7 +52,7 @@ describe('FullTextSearch', () => {
 
     renderFullTextSearch(true);
 
-    const input = screen.getByPlaceholderText(/full-text/i);
+    const input = screen.getByPlaceholderText(/search all sessions/i);
     fireEvent.change(input, { target: { value: 'test' } });
 
     await waitFor(() => {
@@ -74,7 +75,7 @@ describe('FullTextSearch', () => {
           session_name: '',
           role: 'assistant',
           timestamp: '2025-01-01T00:00:00Z',
-          snippet: 'Match here with <b>bold</b> highlight',
+          content: 'Match here with bold highlight',
           score: 1.0,
         },
       ],
@@ -83,8 +84,8 @@ describe('FullTextSearch', () => {
 
     renderFullTextSearch(true);
 
-    const input = screen.getByPlaceholderText(/full-text/i);
-    fireEvent.change(input, { target: { value: 'match' } });
+    const input = screen.getByPlaceholderText(/search all sessions/i);
+    fireEvent.change(input, { target: { value: 'bold' } });
 
     await waitFor(() => {
       expect(mockInvoke).toHaveBeenCalled();
@@ -104,7 +105,7 @@ describe('FullTextSearch', () => {
     vi.useFakeTimers();
     renderFullTextSearch(true);
 
-    const input = screen.getByPlaceholderText(/full-text/i);
+    const input = screen.getByPlaceholderText(/search all sessions/i);
     fireEvent.change(input, { target: { value: 'test' } });
 
     // Fast-forward the debounce (300ms) so performSearch starts

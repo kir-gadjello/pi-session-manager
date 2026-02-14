@@ -44,6 +44,7 @@ pub fn run() {
             read_session_file_incremental,
             get_file_stats,
             get_session_entries,
+            get_session_by_path,
             search_sessions,
             search_sessions_fts,
             full_text_search,
