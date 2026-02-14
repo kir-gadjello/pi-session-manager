@@ -12,6 +12,11 @@ import { components } from './components'
 import { command } from './command'
 import { role } from './role'
 import { favorites } from './favorites'
+import { onboarding } from './onboarding'
+import terminal from './terminal'
+import { tags } from './tags'
+import { plugins } from './plugins'
+import { time } from './time'
 
 export const enUS = {
   common,
@@ -28,6 +33,16 @@ export const enUS = {
   command,
   role,
   favorites,
+  onboarding,
+  terminal,
+  tags,
+  plugins,
+  time,
+  connection: {
+    disconnected: 'Cannot connect to server — is the app running?',
+    connecting: 'Reconnecting…',
+    reconnected: 'Reconnected',
+  },
 } as const
 
 export type Translations = typeof enUS

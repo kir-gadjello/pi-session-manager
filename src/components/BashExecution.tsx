@@ -33,6 +33,11 @@ export default function BashExecution({
 
   useEffect(() => {
     if (codeRef.current) {
+      // Skip if already highlighted
+      if (codeRef.current.dataset.highlighted === 'yes') {
+        return
+      }
+
       try {
         hljs.highlightElement(codeRef.current)
       } catch (e) {
@@ -77,12 +82,12 @@ export default function BashExecution({
           Bash
         </span>
         {exitCode !== undefined && exitCode !== null && (
-          <span className="tool-meta" style={{ color: exitCode === 0 ? '#b5bd68' : '#cc6666' }}>
+          <span className="tool-meta" style={{ color: exitCode === 0 ? 'var(--success)' : 'var(--error)' }}>
             exit {exitCode}
           </span>
         )}
         {cancelled && (
-          <span className="tool-meta" style={{ color: '#ffff00' }}>
+          <span className="tool-meta" style={{ color: 'var(--warning)' }}>
             cancelled
           </span>
         )}
@@ -108,26 +113,20 @@ export default function BashExecution({
         </button>
       </div>
       {output && (
-        <div className="tool-output-wrapper">
+        <div
+          className="tool-output-wrapper"
+          onClick={() => setLocalExpanded(!localExpanded)}
+          style={{ cursor: 'pointer' }}
+        >
           <div className="tool-output-header">
-            <span className="tool-output-label">Output</span>
+            <span className="tool-output-label">
+              {localExpanded ? '▾ Output' : '▸ Output'}
+            </span>
             <button
-              onClick={() => setLocalExpanded(!localExpanded)}
-              className="tool-toggle-button"
-              title={localExpanded ? 'Collapse' : 'Expand'}
-            >
-              {localExpanded ? (
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              ) : (
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-              )}
-            </button>
-            <button
-              onClick={handleCopyOutput}
+              onClick={(e) => {
+                e.stopPropagation()
+                handleCopyOutput()
+              }}
               className="tool-copy-button"
               title={outputCopied ? 'Copied!' : 'Copy output'}
             >
@@ -143,7 +142,7 @@ export default function BashExecution({
             </button>
           </div>
           {localExpanded && (
-            <div className="tool-output">
+            <div className="tool-output" onClick={(e) => e.stopPropagation()}>
               <ExpandableOutput text={output} maxLines={20} />
             </div>
           )}

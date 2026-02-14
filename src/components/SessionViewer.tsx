@@ -1,10 +1,10 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, listen } from '../transport'
 import { useTranslation } from 'react-i18next'
-import { ArrowUp, ArrowDown, Loader2, Bot } from 'lucide-react'
+import { ArrowUp, ArrowDown, Loader2, Bot, Search, Eye, EyeOff, ChevronsUpDown } from 'lucide-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import type { SessionInfo, SessionEntry } from '../types'
-import { parseSessionEntries, computeStats, isTauriReady } from '../utils/session'
+import type { SessionInfo, SessionEntry, SessionsDiff } from '../types'
+import { parseSessionEntries, computeStats } from '../utils/session'
 import SessionHeader from './SessionHeader'
 import UserMessage from './UserMessage'
 import AssistantMessage from './AssistantMessage'
@@ -14,19 +14,39 @@ import BranchSummary from './BranchSummary'
 import CustomMessage from './CustomMessage'
 import SessionTree, { type SessionTreeRef } from './SessionTree'
 import OpenInTerminalButton from './OpenInTerminalButton'
+import KbdTooltip from './KbdTooltip'
 import SystemPromptDialog from './SystemPromptDialog'
+import type { TerminalType } from './settings/types'
+import { getPlatformDefaults } from './settings/types'
 import { SessionViewProvider, useSessionView } from '../contexts/SessionViewContext'
+import { useIsMobile } from '../hooks/useIsMobile'
 import '../styles/session.css'
+
+// Session content cache — avoids re-reading file when switching back
+const SESSION_CONTENT_CACHE = new Map<string, {
+  entries: SessionEntry[]
+  lineCount: number
+}>()
+const MAX_CACHE_SIZE = 5
+
+function cacheSessionContent(path: string, entries: SessionEntry[], lineCount: number) {
+  if (SESSION_CONTENT_CACHE.size >= MAX_CACHE_SIZE) {
+    const firstKey = SESSION_CONTENT_CACHE.keys().next().value
+    if (firstKey) SESSION_CONTENT_CACHE.delete(firstKey)
+  }
+  SESSION_CONTENT_CACHE.set(path, { entries, lineCount })
+}
 
 interface SessionViewerProps {
   session: SessionInfo
-  initialEntryId?: string | null
   onExport: () => void
   onRename: () => void
   onBack?: () => void
-  terminal?: 'iterm2' | 'terminal' | 'vscode' | 'custom'
+  onWebResume?: () => void
+  terminal?: TerminalType
   piPath?: string
   customCommand?: string
+  initialEntryId?: string
 }
 
 const SIDEBAR_MIN_WIDTH = 200
@@ -35,25 +55,17 @@ const SIDEBAR_DEFAULT_WIDTH = 400
 const SIDEBAR_WIDTH_KEY = 'pi-session-manager-sidebar-width'
 const MESSAGE_ITEM_GAP = 16
 
-function SessionViewerContent({ session, initialEntryId, onExport, onRename, terminal = 'iterm2', piPath, customCommand }: SessionViewerProps) {
+function SessionViewerContent({ session, onExport, onRename, onBack, onWebResume, terminal = getPlatformDefaults().defaultTerminal, piPath, customCommand, initialEntryId }: SessionViewerProps) {
   const { t } = useTranslation()
-  const { toggleThinking, toggleToolsExpanded } = useSessionView()
+  const { showThinking, toggleThinking, toolsExpanded, toggleToolsExpanded } = useSessionView()
+  const isMobile = useIsMobile()
   const [entries, setEntries] = useState<SessionEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [showLoading, setShowLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showSidebar, setShowSidebar] = useState(false)
   const [activeEntryId, setActiveEntryId] = useState<string | null>(null)
-
-  // Sync activeEntryId when initialEntryId changes (e.g. from search results)
-  useEffect(() => {
-    if (initialEntryId) {
-      setActiveEntryId(initialEntryId)
-    }
-  }, [initialEntryId])
-
-  // ... (rest of the component)
-
+  const [scrollTargetId, setScrollTargetId] = useState<string | null>(null)
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY)
     return saved ? parseInt(saved, 10) : SIDEBAR_DEFAULT_WIDTH
@@ -78,14 +90,11 @@ function SessionViewerContent({ session, initialEntryId, onExport, onRename, ter
   const treeRef = useRef<SessionTreeRef>(null)
 
   const measuredHeightsRef = useRef<Map<number, number>>(new Map())
-  const isScrollingRef = useRef(false)
-  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const loadingTimerRef = useRef<NodeJS.Timeout | null>(null)
   const pendingScrollToBottomRef = useRef(false)
   const prevEntriesLengthRef = useRef(0)
 
   useEffect(() => {
-    console.log('[SessionViewer] useEffect triggered, session.path:', session.path)
     let cancelled = false
 
     // 清除之前的 loading timer
@@ -98,6 +107,7 @@ function SessionViewerContent({ session, initialEntryId, onExport, onRename, ter
     setLineCount(0)
     setEntries([])
     setActiveEntryId(null)
+    setScrollTargetId(null)
     setHasNewMessages(false)
     prevEntriesLengthRef.current = 0
     pendingScrollToBottomRef.current = false
@@ -110,43 +120,43 @@ function SessionViewerContent({ session, initialEntryId, onExport, onRename, ter
         setError(null)
         measuredHeightsRef.current.clear()
 
+        // Check cache first — skip file read when switching back to a previously viewed session
+        const cached = SESSION_CONTENT_CACHE.get(session.path)
+        if (cached) {
+          setEntries(cached.entries)
+          setLineCount(cached.lineCount)
+          const lastMessage = cached.entries.filter(e => e.type === 'message').pop()
+          if (lastMessage) setActiveEntryId(lastMessage.id)
+          pendingScrollToBottomRef.current = true
+          return
+        }
+
         loadingTimerRef.current = setTimeout(() => {
           if (!cancelled) {
-            console.log('[SessionViewer] Setting showLoading to true after 300ms')
             setShowLoading(true)
           }
         }, 300)
 
-        console.log('[SessionViewer] Invoking read_session_file...')
         const jsonlContent = await invoke<string>('read_session_file', { path: session.path })
 
-        if (cancelled) {
-          console.log('[SessionViewer] Load cancelled, ignoring result')
-          return
-        }
-
-        console.log('[SessionViewer] read_session_file returned, content length:', jsonlContent?.length)
-
         const lines = jsonlContent.split('\n').filter(line => line.trim()).length
-        setLineCount(lines)
-
         const parsedEntries = parseSessionEntries(jsonlContent)
-        console.log('[SessionViewer] Parsed entries count:', parsedEntries.length)
+
+        // Always cache, even if cancelled — so StrictMode's second mount hits cache
+        cacheSessionContent(session.path, parsedEntries, lines)
+
+        if (cancelled) return
+
+        setLineCount(lines)
         setEntries(parsedEntries)
 
-        if (initialEntryId) {
-          setActiveEntryId(initialEntryId)
-        } else {
-          const lastMessage = parsedEntries.filter(e => e.type === 'message').pop()
-          if (lastMessage) {
-            setActiveEntryId(lastMessage.id)
-          }
+        const lastMessage = parsedEntries.filter(e => e.type === 'message').pop()
+        if (lastMessage) {
+          setActiveEntryId(lastMessage.id)
         }
 
         // 首次加载后滚动到底部
-        if (!initialEntryId) {
-          pendingScrollToBottomRef.current = true
-        }
+        pendingScrollToBottomRef.current = true
       } catch (err) {
         if (!cancelled) {
           console.error('[SessionViewer] Failed to load session:', err)
@@ -168,54 +178,46 @@ function SessionViewerContent({ session, initialEntryId, onExport, onRename, ter
     doLoad()
 
     return () => {
-      console.log('[SessionViewer] useEffect cleanup, cancelling load')
       cancelled = true
       if (loadingTimerRef.current) {
         clearTimeout(loadingTimerRef.current)
         loadingTimerRef.current = null
       }
     }
+  // Only re-run full load when user selects a DIFFERENT session
+  // File updates while viewing are handled by the incremental listener below
   }, [session.path, t])
 
+  // Handle external navigation request (e.g., from full-text search)
+  useEffect(() => {
+    if (initialEntryId) {
+      setScrollTargetId(initialEntryId);
+    }
+  }, [initialEntryId]);
+
+  // Incremental update: listen for diff events, load new lines if this session was updated
   useEffect(() => {
     if (!session.path || loading) return
 
-    const container = messagesContainerRef.current
-    if (!container) return
+    let unlisten: (() => void) | null = null
 
-    let checkInterval: NodeJS.Timeout
-
-    const handleScroll = () => {
-      isScrollingRef.current = true
-      if (scrollTimeoutRef.current) {
-        clearTimeout(scrollTimeoutRef.current)
-      }
-      scrollTimeoutRef.current = setTimeout(() => {
-        isScrollingRef.current = false
-      }, 150)
+    const setup = async () => {
+      unlisten = await listen<SessionsDiff>('sessions-changed', (event) => {
+        const diff = event.payload
+        if (!diff?.updated?.length) return
+        const hit = diff.updated.some(s => s.path === session.path)
+        if (hit) {
+          loadIncremental()
+        }
+      })
     }
 
-    const checkFileChanges = async () => {
-      if (isScrollingRef.current) return
-      if (!isTauriReady()) return
-      try {
-        await loadIncremental()
-      } catch (err) {
-        console.error('Failed to check file changes:', err)
-      }
-    }
-
-    container.addEventListener('scroll', handleScroll, { passive: true })
-    checkInterval = setInterval(checkFileChanges, 1000)
+    setup()
 
     return () => {
-      clearInterval(checkInterval)
-      if (scrollTimeoutRef.current) {
-        clearTimeout(scrollTimeoutRef.current)
-      }
-      container.removeEventListener('scroll', handleScroll)
+      if (unlisten) unlisten()
     }
-  }, [session.path, lineCount, loading])
+  }, [session.path, loading])
 
   
 
@@ -233,10 +235,15 @@ function SessionViewerContent({ session, initialEntryId, onExport, onRename, ter
       } else if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
         e.preventDefault()
         e.stopPropagation()
-        setShowSidebar(true)
-        setTimeout(() => {
-          treeRef.current?.focusSearch()
-        }, 100)
+        setShowSidebar(prev => {
+          const newState = !prev
+          if (newState) {
+            setTimeout(() => {
+              treeRef.current?.focusSearch()
+            }, 100)
+          }
+          return newState
+        })
       }
     }
 
@@ -244,8 +251,30 @@ function SessionViewerContent({ session, initialEntryId, onExport, onRename, ter
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [toggleThinking, toggleToolsExpanded, setShowSidebar])
 
+  // Compute the path from root to activeEntryId (conversation branch)
+  const pathEntryIds = useMemo(() => {
+    if (!activeEntryId || entries.length === 0) return null
+
+    const byId = new Map<string, SessionEntry>()
+    for (const entry of entries) {
+      byId.set(entry.id, entry)
+    }
+
+    const ids = new Set<string>()
+    let current = byId.get(activeEntryId)
+    while (current) {
+      ids.add(current.id)
+      if (!current.parentId || current.parentId === current.id) break
+      current = byId.get(current.parentId)
+    }
+    return ids
+  }, [entries, activeEntryId])
+
   const renderableEntries = useMemo(() => {
     return entries.filter(entry => {
+      // If we have a path, only show entries on that path
+      if (pathEntryIds && !pathEntryIds.has(entry.id)) return false
+
       if (entry.type === 'message') {
         const role = entry.message?.role
         return role === 'user' || role === 'assistant'
@@ -257,7 +286,7 @@ function SessionViewerContent({ session, initialEntryId, onExport, onRename, ter
         entry.type === 'custom_message'
       )
     })
-  }, [entries])
+  }, [entries, pathEntryIds])
 
   const entryIndexById = useMemo(() => {
     const map = new Map<string, number>()
@@ -329,14 +358,14 @@ function SessionViewerContent({ session, initialEntryId, onExport, onRename, ter
   }, [])
 
   useEffect(() => {
-    if (activeEntryId && messagesContainerRef.current) {
-      const targetIndex = entryIndexById.get(activeEntryId)
+    if (scrollTargetId && messagesContainerRef.current) {
+      const targetIndex = entryIndexById.get(scrollTargetId)
       if (targetIndex === undefined) return
 
       rowVirtualizer.scrollToIndex(targetIndex, { align: 'center' })
 
       const tryHighlight = () => {
-        const element = document.getElementById(`entry-${activeEntryId}`)
+        const element = document.getElementById(`entry-${scrollTargetId}`)
         if (!element) return false
         element.classList.add('highlight')
         setTimeout(() => {
@@ -352,8 +381,11 @@ function SessionViewerContent({ session, initialEntryId, onExport, onRename, ter
           }, 50)
         }
       })
+
+      // Clear scrollTargetId after handling
+      setScrollTargetId(null)
     }
-  }, [activeEntryId, entryIndexById, rowVirtualizer])
+  }, [scrollTargetId, entryIndexById, rowVirtualizer])
 
   useEffect(() => {
     const container = messagesContainerRef.current
@@ -426,11 +458,14 @@ function SessionViewerContent({ session, initialEntryId, onExport, onRename, ter
   }, [isResizing])
 
   // 增量加载新内容
-  const loadIncremental = async () => {
+  const lineCountRef = useRef(lineCount)
+  lineCountRef.current = lineCount
+
+  const loadIncremental = useCallback(async () => {
     try {
       const result = await invoke<[number, string]>('read_session_file_incremental', {
         path: session.path,
-        fromLine: lineCount
+        fromLine: lineCountRef.current
       })
 
       const [newLineCount, newContent] = result
@@ -441,7 +476,12 @@ function SessionViewerContent({ session, initialEntryId, onExport, onRename, ter
 
         if (newEntries.length > 0) {
           // 追加到现有列表
-          setEntries(prev => [...prev, ...newEntries])
+          setEntries(prev => {
+            const merged = [...prev, ...newEntries]
+            // Update cache with merged entries
+            cacheSessionContent(session.path, merged, newLineCount)
+            return merged
+          })
 
           // 更新行数
           setLineCount(newLineCount)
@@ -463,7 +503,7 @@ function SessionViewerContent({ session, initialEntryId, onExport, onRename, ter
     } catch (err) {
       console.error('Failed to load incremental session:', err)
     }
-  }
+  }, [session.path, session.modified])
 
   const stats = useMemo(() => computeStats(entries), [entries])
   const headerEntry = useMemo(() => entries.find(e => e.type === 'session'), [entries])
@@ -541,8 +581,9 @@ function SessionViewerContent({ session, initialEntryId, onExport, onRename, ter
 
   const messageEntries = useMemo(() => entries.filter(e => e.type === 'message'), [entries])
 
-  const handleTreeNodeClick = useCallback((_leafId: string, targetId: string) => {
-    setActiveEntryId(targetId)
+  const handleTreeNodeClick = useCallback((leafId: string, targetId: string) => {
+    setActiveEntryId(leafId)
+    setScrollTargetId(targetId)
   }, [])
 
   return (
@@ -551,9 +592,20 @@ function SessionViewerContent({ session, initialEntryId, onExport, onRename, ter
         <>
           <aside 
             ref={sidebarRef}
-            className="session-sidebar" 
-            style={{ width: `${sidebarWidth}px` }}
+            className="session-sidebar absolute left-0 top-0 bottom-0 z-20 shadow-xl" 
+            style={{ width: isMobile ? '100vw' : `${sidebarWidth}px` }}
           >
+            {isMobile && (
+              <button
+                onClick={() => setShowSidebar(false)}
+                className="absolute top-2 right-2 z-30 p-1.5 text-muted-foreground hover:text-foreground hover:bg-secondary rounded transition-colors"
+                title={t('session.hideSidebar')}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            )}
             <SessionTree
               ref={treeRef}
               entries={entries}
@@ -562,86 +614,165 @@ function SessionViewerContent({ session, initialEntryId, onExport, onRename, ter
             />
           </aside>
           
-          {/* 拖拽手柄 */}
-          <div
-            ref={resizeHandleRef}
-            className={`sidebar-resize-handle ${isResizing ? 'resizing' : ''}`}
-            onMouseDown={handleMouseDown}
-          >
-            <div className="sidebar-resize-handle-inner" />
-          </div>
+          {/* 拖拽手柄 - 跟随侧边栏, 移动端禁用 */}
+          {!isMobile && (
+            <div
+              ref={resizeHandleRef}
+              className={`sidebar-resize-handle absolute z-30 ${isResizing ? 'resizing' : ''}`}
+              style={{ left: `${sidebarWidth}px` }}
+              onMouseDown={handleMouseDown}
+            >
+              <div className="sidebar-resize-handle-inner" />
+            </div>
+          )}
         </>
       )}
 
-      <div className="flex-1 flex flex-col min-w-0 min-h-0">
-        <div className="flex items-center justify-between px-4 py-2 border-b border-[#2c2d3b]">
-          <div className="flex items-baseline gap-2 min-w-0">
-            <button
-              onClick={() => setShowSidebar(!showSidebar)}
-              className="p-1.5 text-[#6a6f85] hover:text-white hover:bg-[#2c2d3b] rounded transition-colors flex-shrink-0 self-center"
-              title={showSidebar ? t('session.hideSidebar') : t('session.showSidebar')}
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-            </button>
+      <div className="flex-1 flex flex-col min-w-0 min-h-0 transition-all duration-200" style={{ paddingLeft: showSidebar && !isMobile ? `${sidebarWidth}px` : 0 }}>
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-border relative z-20" data-tauri-drag-region>
+          <div className="flex items-center gap-1.5 min-w-0">
+            {isMobile && onBack && (
+              <button
+                onClick={onBack}
+                className="p-1 text-muted-foreground hover:text-foreground hover:bg-secondary rounded transition-colors flex-shrink-0"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                </svg>
+              </button>
+            )}
+            {!isMobile && (
+              <button
+                onClick={() => setShowSidebar(!showSidebar)}
+                className="p-1 text-muted-foreground hover:text-foreground hover:bg-secondary rounded transition-colors flex-shrink-0"
+                title={showSidebar ? t('session.hideSidebar') : t('session.showSidebar')}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+            )}
             <span className="text-sm font-medium truncate">{session.name || t('session.title')}</span>
-            <span className="text-xs text-[#6a6f85] flex-shrink-0">
+            <span className="text-[11px] text-muted-foreground flex-shrink-0">
               {messageEntries.length} {t('session.messages')}
             </span>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-1 flex-shrink-0">
+            {isMobile && (
+              <button
+                onClick={() => {
+                  setShowSidebar(!showSidebar)
+                  if (!showSidebar) {
+                    setTimeout(() => treeRef.current?.focusSearch(), 100)
+                  }
+                }}
+                className="p-1.5 text-xs bg-secondary hover:bg-secondary-hover rounded transition-colors"
+                title={t('session.showSidebar')}
+              >
+                <Search className="h-3.5 w-3.5" />
+              </button>
+            )}
+            <KbdTooltip shortcut="Cmd+T">
+            <button
+              onClick={toggleThinking}
+              className={`p-1.5 text-xs rounded transition-colors ${showThinking ? 'bg-accent/15 text-accent' : 'bg-secondary hover:bg-secondary-hover'}`}
+              title={`${showThinking ? 'Hide' : 'Show'} thinking (⌘T)`}
+            >
+              {showThinking ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+            </button>
+            </KbdTooltip>
+            <KbdTooltip shortcut="Cmd+O">
+            <button
+              onClick={toggleToolsExpanded}
+              className={`p-1.5 text-xs rounded transition-colors ${toolsExpanded ? 'bg-accent/15 text-accent' : 'bg-secondary hover:bg-secondary-hover'}`}
+              title={`${toolsExpanded ? 'Collapse' : 'Expand'} tools (⌘O)`}
+            >
+              <ChevronsUpDown className="h-3.5 w-3.5" />
+            </button>
+            </KbdTooltip>
             <button
               onClick={() => setShowSystemPromptDialog(true)}
-              className="px-2 py-1 text-xs bg-[#2c2d3b] hover:bg-[#3c3d4b] rounded transition-colors cursor-pointer"
+              className="p-1.5 text-xs bg-secondary hover:bg-secondary-hover rounded transition-colors"
               title={t('session.systemPromptAndTools', '系统提示词和工具')}
             >
               <Bot className="h-3.5 w-3.5" />
             </button>
-            <button
-              onClick={scrollToTop}
-              className="px-2 py-1 text-xs bg-[#2c2d3b] hover:bg-[#3c3d4b] rounded transition-colors cursor-pointer"
-              title={t('session.scrollToTop', '滚动到顶部')}
-            >
-              <ArrowUp className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={() => scrollToBottom()}
-              className="px-2 py-1 text-xs bg-[#2c2d3b] hover:bg-[#3c3d4b] rounded transition-colors cursor-pointer"
-              title={t('session.scrollToBottom', '滚动到底部')}
-            >
-              <ArrowDown className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={onRename}
-              className="px-3 py-1 text-xs bg-[#2c2d3b] hover:bg-[#3c3d4b] rounded transition-colors cursor-pointer"
-            >
-              {t('common.rename')}
-            </button>
-            <button
-              onClick={onExport}
-              className="px-3 py-1 text-xs bg-[#2c2d3b] hover:bg-[#3c3d4b] rounded transition-colors cursor-pointer"
-            >
-              {t('common.export')}
-            </button>
-            <OpenInTerminalButton
-              session={session}
-              terminal={terminal}
-              piPath={piPath}
-              customCommand={customCommand}
-              size="sm"
-              variant="ghost"
-              label={t('session.resume', '恢复')}
-              showLabel={true}
-              className="px-3 py-1"
-              onError={(error) => console.error('[SessionViewer] Failed to open in terminal:', error)}
-            />
+            {isMobile && (
+              <>
+                <button
+                  onClick={() => scrollToBottom()}
+                  className="p-1.5 text-xs bg-secondary hover:bg-secondary-hover rounded transition-colors"
+                  title={t('session.scrollToBottom', '滚动到底部')}
+                >
+                  <ArrowDown className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={onRename}
+                  className="px-2 py-1 text-xs bg-secondary hover:bg-secondary-hover rounded transition-colors"
+                >
+                  {t('common.rename')}
+                </button>
+                <button
+                  onClick={onExport}
+                  className="px-2 py-1 text-xs bg-secondary hover:bg-secondary-hover rounded transition-colors"
+                >
+                  {t('common.export')}
+                </button>
+              </>
+            )}
+            {!isMobile && (
+              <>
+                <button
+                  onClick={scrollToTop}
+                  className="p-1.5 text-xs bg-secondary hover:bg-secondary-hover rounded transition-colors"
+                  title={t('session.scrollToTop', '滚动到顶部')}
+                >
+                  <ArrowUp className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={() => scrollToBottom()}
+                  className="p-1.5 text-xs bg-secondary hover:bg-secondary-hover rounded transition-colors"
+                  title={t('session.scrollToBottom', '滚动到底部')}
+                >
+                  <ArrowDown className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={onRename}
+                  className="px-2.5 py-1 text-xs bg-secondary hover:bg-secondary-hover rounded transition-colors"
+                >
+                  {t('common.rename')}
+                </button>
+                <KbdTooltip shortcut="Cmd+E">
+                <button
+                  onClick={onExport}
+                  className="px-2.5 py-1 text-xs bg-secondary hover:bg-secondary-hover rounded transition-colors"
+                >
+                  {t('common.export')}
+                </button>
+                </KbdTooltip>
+                <KbdTooltip shortcut="Cmd+R">
+                <OpenInTerminalButton
+                  session={session}
+                  terminal={terminal}
+                  piPath={piPath}
+                  customCommand={customCommand}
+                  size="sm"
+                  variant="ghost"
+                  label={t('session.resume', '恢复')}
+                  showLabel={true}
+                  className="px-3 py-1"
+                  onWebResume={onWebResume}
+                  onError={(error) => console.error('[SessionViewer] Failed to open in terminal:', error)}
+                />
+                </KbdTooltip>
+              </>
+            )}
           </div>
         </div>
 
         {showLoading ? (
           <div className="flex-1 flex items-center justify-center">
-            <div className="flex items-center gap-2 text-[#6a6f85]">
+            <div className="flex items-center gap-2 text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
               <span>{t('session.loading')}</span>
             </div>
@@ -650,7 +781,7 @@ function SessionViewerContent({ session, initialEntryId, onExport, onRename, ter
           <div className="flex-1 flex items-center justify-center text-red-400">
             <div className="text-center">
               <p className="mb-2">{t('session.error')}</p>
-              <p className="text-sm text-[#6a6f85]">{error}</p>
+              <p className="text-sm text-muted-foreground">{error}</p>
             </div>
           </div>
         ) : (
@@ -661,7 +792,7 @@ function SessionViewerContent({ session, initialEntryId, onExport, onRename, ter
                   scrollToBottom()
                   setHasNewMessages(false)
                 }}
-                className="absolute bottom-4 right-4 z-10 flex items-center gap-1 rounded-full bg-[#2c2d3b] hover:bg-[#3c3d4b] text-xs text-white px-3 py-2 shadow-lg transition-colors"
+                className="absolute bottom-4 right-4 z-10 flex items-center gap-1 rounded-full bg-secondary hover:bg-secondary-hover text-xs text-foreground px-3 py-2 shadow-lg transition-colors"
                 title={t('session.scrollToBottom', '滚动到底部')}
               >
                 <ArrowDown className="h-3.5 w-3.5" />
@@ -711,6 +842,7 @@ function SessionViewerContent({ session, initialEntryId, onExport, onRename, ter
         isOpen={showSystemPromptDialog}
         onClose={() => setShowSystemPromptDialog(false)}
         entries={entries}
+        sessionPath={session.path}
       />
     </div>
   )

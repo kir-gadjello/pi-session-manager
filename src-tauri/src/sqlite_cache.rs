@@ -1,10 +1,11 @@
 use crate::config::Config;
-use crate::models::SessionInfo;
+use crate::models::{SessionEntry, SessionInfo};
 use crate::session_parser::SessionDetails;
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Result as SqliteResult};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -156,6 +157,78 @@ fn open_and_init_db(db_path: &Path, config: &Config) -> Result<Connection, Strin
         [],
     )
     .ok(); // 忽略错误
+
+    // Create tags table
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS tags (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            color TEXT NOT NULL DEFAULT 'info',
+            icon TEXT,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            is_builtin INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        )",
+        [],
+    )
+    .map_err(|e| format!("Failed to create tags table: {e}"))?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS session_tags (
+            session_id TEXT NOT NULL,
+            tag_id TEXT NOT NULL,
+            position INTEGER NOT NULL DEFAULT 0,
+            assigned_at TEXT NOT NULL,
+            PRIMARY KEY (session_id, tag_id)
+        )",
+        [],
+    )
+    .map_err(|e| format!("Failed to create session_tags table: {e}"))?;
+
+    // Migration: add auto_rules column to tags
+    conn.execute("ALTER TABLE tags ADD COLUMN auto_rules TEXT", [])
+        .ok();
+
+    // Migration: add parent_id column to tags for hierarchical labels
+    conn.execute("ALTER TABLE tags ADD COLUMN parent_id TEXT", [])
+        .ok();
+
+    // Insert builtin tags based on system language
+    let now = Utc::now().to_rfc3339();
+
+    // Detect system language
+    let is_chinese = std::env::var("LANG")
+        .or_else(|_| std::env::var("LC_ALL"))
+        .or_else(|_| std::env::var("LC_MESSAGES"))
+        .map(|lang| lang.to_lowercase().contains("zh") || lang.to_lowercase().contains("cn"))
+        .unwrap_or(false);
+
+    let builtins = if is_chinese {
+        // Chinese labels
+        [
+            ("builtin-todo", "待处理", "warning", 0),
+            ("builtin-wip", "进行中", "info", 1),
+            ("builtin-done", "已完成", "success", 2),
+            ("builtin-important", "重要", "destructive", 3),
+            ("builtin-archive", "归档", "slate", 4),
+        ]
+    } else {
+        // English labels
+        [
+            ("builtin-todo", "To Do", "warning", 0),
+            ("builtin-wip", "In Progress", "info", 1),
+            ("builtin-done", "Done", "success", 2),
+            ("builtin-important", "Important", "destructive", 3),
+            ("builtin-archive", "Archive", "slate", 4),
+        ]
+    };
+
+    for (id, name, color, order) in &builtins {
+        conn.execute(
+            "INSERT OR IGNORE INTO tags (id, name, color, sort_order, is_builtin, created_at) VALUES (?1, ?2, ?3, ?4, 1, ?5)",
+            params![id, name, color, order, now],
+        ).ok();
+    }
 
     // Create message_entries table for per-message FTS (avoids re-reading files)
     conn.execute(
@@ -590,7 +663,7 @@ pub fn upsert_session(
         .query_row(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='message_entries'",
             [],
-            |row| Ok(row.get::<_, String>(0)?),
+            |row| row.get::<_, String>(0),
         )
         .map(|_| true)
         .unwrap_or(false)
@@ -773,7 +846,7 @@ pub fn needs_reindexing(conn: &Connection, path: &str) -> Result<bool, String> {
     ).map_err(|e| format!("Failed to prepare statement: {}", e))?;
 
     let result = stmt
-        .query_row(params![path], |row| Ok(row.get::<_, bool>(0)?))
+        .query_row(params![path], |row| row.get::<_, bool>(0))
         .optional()
         .map_err(|e| format!("Failed to query needs_reindexing: {}", e))?;
 
@@ -1174,8 +1247,82 @@ pub fn insert_message_entries(conn: &Connection, session: &SessionInfo) -> Resul
     Ok(())
 }
 
+/// Upsert message entries into message_entries table from a pre-parsed list.
+/// This is more efficient than insert_message_entries because it avoids re-reading the session file.
+pub fn upsert_message_entries(
+    conn: &Connection,
+    session_path: &str,
+    entries: &[SessionEntry],
+) -> Result<(), String> {
+    use rusqlite::OptionalExtension;
+
+    // Check if message_entries table exists (FTS may be disabled)
+    let mut stmt = conn
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='message_entries'")
+        .map_err(|e| format!("Failed to check message_entries existence: {}", e))?;
+    let exists: bool = stmt
+        .query_row([], |row| Ok(row.get::<_, String>(0)? == "message_entries"))
+        .unwrap_or(false);
+
+    if !exists {
+        // FTS is disabled or table not created yet - skip
+        return Ok(());
+    }
+
+    // Drop the statement to release borrow
+    drop(stmt);
+
+    // Delete existing entries for this session (non-transactional, each execute is auto-committed)
+    conn.execute(
+        "DELETE FROM message_entries WHERE session_path = ?",
+        params![session_path],
+    )
+    .map_err(|e| {
+        format!(
+            "Failed to delete existing message entries for {}: {}",
+            session_path, e
+        )
+    })?;
+
+    // Insert each entry (could be batched but ok)
+    for entry in entries {
+        if let Some(ref msg) = entry.message {
+            // Concatenate all text content parts into a single string
+            let content = msg
+                .content
+                .iter()
+                .filter_map(|c| c.text.as_deref())
+                .collect::<String>();
+
+            if content.is_empty() {
+                continue;
+            }
+
+            conn.execute(
+                "INSERT OR REPLACE INTO message_entries (id, session_path, role, content, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    &entry.id,
+                    session_path,
+                    &msg.role,
+                    &content,
+                    &entry.timestamp.to_rfc3339(),
+                ],
+            )
+            .map_err(|e| format!("Failed to insert message entry {}: {}", entry.id, e))?;
+        }
+    }
+
+    debug!(
+        "Upserted {} message entries for session: {}",
+        entries.len(),
+        session_path
+    );
+    Ok(())
+}
+
 /// Search message-level FTS5 index and return matching message entries
 /// Returns (entry_id, session_path, role, snippet, timestamp, rank)
+#[allow(clippy::type_complexity)]
 pub fn search_message_fts(
     conn: &Connection,
     query: &str,
@@ -1370,4 +1517,274 @@ pub fn full_rebuild_fts(conn: &Connection) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+// ============ Utility & Tag Management ============
+
+// Clear all cached session data (sessions table and session_details_cache table)
+// Note: favorites table is preserved
+pub fn clear_all_cache(conn: &Connection) -> Result<(usize, usize), String> {
+    // Delete all sessions
+    let sessions_deleted = conn
+        .execute("DELETE FROM sessions", [])
+        .map_err(|e| format!("Failed to delete sessions: {e}"))?;
+
+    // Delete all session details cache
+    let details_deleted = conn
+        .execute("DELETE FROM session_details_cache", [])
+        .map_err(|e| format!("Failed to delete session details cache: {e}"))?;
+
+    // Vacuum to reclaim space
+    vacuum(conn)?;
+
+    Ok((sessions_deleted, details_deleted))
+}
+
+// Tag management structs and functions
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbTag {
+    pub id: String,
+    pub name: String,
+    pub color: String,
+    pub icon: Option<String>,
+    pub sort_order: i64,
+    pub is_builtin: bool,
+    pub created_at: String,
+    pub auto_rules: Option<String>,
+    pub parent_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbSessionTag {
+    pub session_id: String,
+    pub tag_id: String,
+    pub position: i64,
+    pub assigned_at: String,
+}
+
+pub fn get_all_tags(conn: &Connection) -> Result<Vec<DbTag>, String> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, color, icon, sort_order, is_builtin, created_at, auto_rules, parent_id FROM tags ORDER BY sort_order"
+    ).map_err(|e| format!("Failed to prepare tags statement: {e}"))?;
+
+    let tags = stmt
+        .query_map([], |row| {
+            Ok(DbTag {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                color: row.get(2)?,
+                icon: row.get(3)?,
+                sort_order: row.get(4)?,
+                is_builtin: row.get(5)?,
+                created_at: row.get(6)?,
+                auto_rules: row.get(7)?,
+                parent_id: row.get(8)?,
+            })
+        })
+        .map_err(|e| format!("Failed to query tags: {e}"))?
+        .collect::<SqliteResult<Vec<_>>>()
+        .map_err(|e| format!("Failed to collect tags: {e}"))?;
+
+    Ok(tags)
+}
+
+pub fn create_tag(
+    conn: &Connection,
+    id: &str,
+    name: &str,
+    color: &str,
+    icon: Option<&str>,
+    parent_id: Option<&str>,
+) -> Result<(), String> {
+    let max_order: i64 = conn
+        .query_row("SELECT COALESCE(MAX(sort_order), -1) FROM tags", [], |r| {
+            r.get(0)
+        })
+        .unwrap_or(-1);
+    conn.execute(
+        "INSERT INTO tags (id, name, color, icon, sort_order, is_builtin, created_at, parent_id) VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7)",
+        params![id, name, color, icon, max_order + 1, Utc::now().to_rfc3339(), parent_id],
+    ).map_err(|e| format!("Failed to create tag: {e}"))?;
+    Ok(())
+}
+
+pub fn update_tag(
+    conn: &Connection,
+    id: &str,
+    name: Option<&str>,
+    color: Option<&str>,
+    icon: Option<&str>,
+    sort_order: Option<i64>,
+    parent_id: Option<Option<&str>>,
+) -> Result<(), String> {
+    let mut sets = Vec::new();
+    let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    if let Some(v) = name {
+        sets.push("name = ?");
+        values.push(Box::new(v.to_string()));
+    }
+    if let Some(v) = color {
+        sets.push("color = ?");
+        values.push(Box::new(v.to_string()));
+    }
+    if let Some(v) = icon {
+        sets.push("icon = ?");
+        values.push(Box::new(v.to_string()));
+    }
+    if let Some(v) = sort_order {
+        sets.push("sort_order = ?");
+        values.push(Box::new(v));
+    }
+    if let Some(v) = parent_id {
+        sets.push("parent_id = ?");
+        values.push(Box::new(v.map(|s| s.to_string())));
+    }
+    if sets.is_empty() {
+        return Ok(());
+    }
+    values.push(Box::new(id.to_string()));
+    let sql = format!("UPDATE tags SET {} WHERE id = ?", sets.join(", "));
+    let params: Vec<&dyn rusqlite::types::ToSql> = values.iter().map(|b| b.as_ref()).collect();
+    conn.execute(&sql, params.as_slice())
+        .map_err(|e| format!("Failed to update tag: {e}"))?;
+    Ok(())
+}
+
+pub fn delete_tag(conn: &Connection, id: &str) -> Result<(), String> {
+    conn.execute("DELETE FROM session_tags WHERE tag_id = ?", params![id])
+        .map_err(|e| format!("Failed to remove tag associations: {e}"))?;
+    conn.execute("DELETE FROM tags WHERE id = ?", params![id])
+        .map_err(|e| format!("Failed to delete tag: {e}"))?;
+    Ok(())
+}
+
+pub fn get_all_session_tags(conn: &Connection) -> Result<Vec<DbSessionTag>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT session_id, tag_id, position, assigned_at FROM session_tags ORDER BY position",
+        )
+        .map_err(|e| format!("Failed to prepare session_tags statement: {e}"))?;
+
+    let items = stmt
+        .query_map([], |row| {
+            Ok(DbSessionTag {
+                session_id: row.get(0)?,
+                tag_id: row.get(1)?,
+                position: row.get(2)?,
+                assigned_at: row.get(3)?,
+            })
+        })
+        .map_err(|e| format!("Failed to query session_tags: {e}"))?
+        .collect::<SqliteResult<Vec<_>>>()
+        .map_err(|e| format!("Failed to collect session_tags: {e}"))?;
+
+    Ok(items)
+}
+
+pub fn assign_tag(conn: &Connection, session_id: &str, tag_id: &str) -> Result<(), String> {
+    let max_pos: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(position), -1) FROM session_tags WHERE tag_id = ?",
+            params![tag_id],
+            |r| r.get(0),
+        )
+        .unwrap_or(-1);
+    conn.execute(
+        "INSERT OR IGNORE INTO session_tags (session_id, tag_id, position, assigned_at) VALUES (?1, ?2, ?3, ?4)",
+        params![session_id, tag_id, max_pos + 1, Utc::now().to_rfc3339()],
+    ).map_err(|e| format!("Failed to assign tag: {e}"))?;
+    Ok(())
+}
+
+pub fn remove_tag_from_session(
+    conn: &Connection,
+    session_id: &str,
+    tag_id: &str,
+) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM session_tags WHERE session_id = ? AND tag_id = ?",
+        params![session_id, tag_id],
+    )
+    .map_err(|e| format!("Failed to remove tag: {e}"))?;
+    Ok(())
+}
+
+pub fn move_session_tag(
+    conn: &Connection,
+    session_id: &str,
+    from_tag_id: Option<&str>,
+    to_tag_id: &str,
+    position: i64,
+) -> Result<(), String> {
+    if let Some(from) = from_tag_id {
+        conn.execute(
+            "DELETE FROM session_tags WHERE session_id = ? AND tag_id = ?",
+            params![session_id, from],
+        )
+        .map_err(|e| format!("Failed to remove old tag: {e}"))?;
+    }
+    conn.execute(
+        "INSERT OR REPLACE INTO session_tags (session_id, tag_id, position, assigned_at) VALUES (?1, ?2, ?3, ?4)",
+        params![session_id, to_tag_id, position, Utc::now().to_rfc3339()],
+    ).map_err(|e| format!("Failed to move session tag: {e}"))?;
+    Ok(())
+}
+
+pub fn reorder_tags(conn: &Connection, tag_ids: &[String]) -> Result<(), String> {
+    for (i, id) in tag_ids.iter().enumerate() {
+        conn.execute(
+            "UPDATE tags SET sort_order = ? WHERE id = ?",
+            params![i as i64, id],
+        )
+        .map_err(|e| format!("Failed to reorder tag: {e}"))?;
+    }
+    Ok(())
+}
+
+pub fn update_tag_auto_rules(
+    conn: &Connection,
+    id: &str,
+    auto_rules: Option<&str>,
+) -> Result<(), String> {
+    conn.execute(
+        "UPDATE tags SET auto_rules = ? WHERE id = ?",
+        params![auto_rules, id],
+    )
+    .map_err(|e| format!("Failed to update auto_rules: {e}"))?;
+    Ok(())
+}
+
+pub fn evaluate_auto_rules(
+    conn: &Connection,
+    session_id: &str,
+    text: &str,
+) -> Result<Vec<String>, String> {
+    let tags = get_all_tags(conn)?;
+    let mut matched = Vec::new();
+    for tag in &tags {
+        let rules_json = match &tag.auto_rules {
+            Some(r) if !r.is_empty() => r,
+            _ => continue,
+        };
+        let rules: Vec<serde_json::Value> = serde_json::from_str(rules_json).unwrap_or_default();
+        for rule in &rules {
+            let enabled = rule
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let pattern = rule.get("pattern").and_then(|v| v.as_str()).unwrap_or("");
+            if !enabled || pattern.is_empty() {
+                continue;
+            }
+            if let Ok(re) = regex::Regex::new(pattern) {
+                if re.is_match(text) {
+                    assign_tag(conn, session_id, &tag.id)?;
+                    matched.push(tag.id.clone());
+                    break;
+                }
+            }
+        }
+    }
+    Ok(matched)
 }

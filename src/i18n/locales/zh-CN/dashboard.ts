@@ -22,6 +22,7 @@ export const dashboard = {
     sessions: '会话',
     sessionsByProject: '按项目统计会话',
     projects: '项目',
+    clickToView: '点击查看 {{project}}',
   },
   topModels: {
     title: '热门模型',
@@ -64,6 +65,7 @@ export const dashboard = {
     sessions: '会话',
     messages: '消息',
     change: '变化',
+    vsLastWeek: '较上周',
   },
   productivityMetrics: {
     title: '生产力指标',

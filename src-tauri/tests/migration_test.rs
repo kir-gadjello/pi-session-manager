@@ -211,9 +211,9 @@ fn test_database_corruption_recovery() {
 #[test]
 fn test_fts_vtable_corruption_triggers_database_recreation() {
     // Use a temp directory to avoid interfering with real user data
+    use chrono::Utc;
     use std::env;
     use tempfile::tempdir;
-    use chrono::Utc;
 
     let temp_dir = tempdir().unwrap();
     let original_home = env::var("HOME").ok();
@@ -259,7 +259,8 @@ fn test_fts_vtable_corruption_triggers_database_recreation() {
         ).unwrap();
 
         // Verify FTS works before corruption
-        let results_before = pi_session_manager::sqlite_cache::search_message_fts(&conn, "hello", None, 10).unwrap();
+        let results_before =
+            pi_session_manager::sqlite_cache::search_message_fts(&conn, "hello", None, 10).unwrap();
         assert_eq!(results_before.len(), 1);
         assert_eq!(results_before[0].1, session_path);
     }
@@ -280,8 +281,13 @@ fn test_fts_vtable_corruption_triggers_database_recreation() {
         .expect("init after corruption should succeed");
 
     // Verify that the original session data is gone (DB was recreated)
-    let session_count: i64 = conn2.query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0)).unwrap();
-    assert_eq!(session_count, 0, "Sessions table should be empty after DB recreation");
+    let session_count: i64 = conn2
+        .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        session_count, 0,
+        "Sessions table should be empty after DB recreation"
+    );
 
     // Verify that FTS can be used normally on the fresh DB by inserting new data
     let new_session_path = "/test/session2.jsonl".to_string();
@@ -311,7 +317,8 @@ fn test_fts_vtable_corruption_triggers_database_recreation() {
     ).unwrap();
 
     // Verify FTS works on the new data
-    let results_after = pi_session_manager::sqlite_cache::search_message_fts(&conn2, "new", None, 10).unwrap();
+    let results_after =
+        pi_session_manager::sqlite_cache::search_message_fts(&conn2, "new", None, 10).unwrap();
     assert_eq!(results_after.len(), 1);
     assert_eq!(results_after[0].1, new_session_path);
 

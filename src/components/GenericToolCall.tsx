@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { escapeHtml } from '../utils/markdown'
 import { formatDate } from '../utils/format'
-import { Copy, Check } from 'lucide-react'
 
 interface GenericToolCallProps {
   name: string
@@ -22,8 +21,6 @@ export default function GenericToolCall({
 }: GenericToolCallProps) {
   const [argsExpanded, setArgsExpanded] = useState(false)
   const [outputExpanded, setOutputExpanded] = useState(false)
-  const [argsCopied, setArgsCopied] = useState(false)
-  const [outputCopied, setOutputCopied] = useState(false)
 
   useEffect(() => {
     setArgsExpanded(expanded)
@@ -43,28 +40,6 @@ export default function GenericToolCall({
   const outputLines = output ? output.split('\n') : []
   const outputRemaining = outputLines.length - 20
 
-  const handleCopyArgs = async () => {
-    if (!argsText) return
-    try {
-      await navigator.clipboard.writeText(argsText)
-      setArgsCopied(true)
-      setTimeout(() => setArgsCopied(false), 2000)
-    } catch (err) {
-      console.error('Failed to copy arguments:', err)
-    }
-  }
-
-  const handleCopyOutput = async () => {
-    if (!output) return
-    try {
-      await navigator.clipboard.writeText(output)
-      setOutputCopied(true)
-      setTimeout(() => setOutputCopied(false), 2000)
-    } catch (err) {
-      console.error('Failed to copy output:', err)
-    }
-  }
-
   return (
     <div className={`tool-execution ${statusClass}`}>
       {timestamp && <div className="message-timestamp">{formatDate(timestamp)}</div>}
@@ -79,108 +54,66 @@ export default function GenericToolCall({
       </div>
 
       {args && Object.keys(args).length > 0 && (
-        <div className="tool-arguments-section">
-          <div className="tool-output-header">
-            <span className="tool-output-label">Arguments</span>
-            <button
-              onClick={handleCopyArgs}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleCopyArgs();
-                }
-              }}
-              className="tool-copy-button"
-              aria-label={argsCopied ? 'Copied arguments' : 'Copy arguments'}
-              title={argsCopied ? 'Copied!' : 'Copy arguments'}
-            >
-              {argsCopied ? (
-                <Check className="w-4 h-4" />
-              ) : (
-                <Copy className="w-4 h-4" />
-              )}
-            </button>
-          </div>
-          <div className="tool-arguments">
-            {argsRemaining > 0 && !argsExpanded ? (
-              <>
-                <pre><code>{escapeHtml(argsLines.slice(0, 10).join('\n'))}</code></pre>
-                <div
-                  className="expand-hint"
-                  onClick={() => setArgsExpanded(true)}
-                  style={{ cursor: 'pointer' }}
-                >
-                  ... {argsRemaining} more lines
-                </div>
-              </>
-            ) : (
-              <pre><code>{escapeHtml(argsText)}</code></pre>
-            )}
-            {argsRemaining > 0 && argsExpanded && (
-              <div
-                className="expand-hint"
-                onClick={() => setArgsExpanded(false)}
-                style={{ cursor: 'pointer' }}
-              >
-                Show less
+        <div
+          className="tool-output-wrapper"
+          style={{ marginTop: '8px', cursor: argsRemaining > 0 ? 'pointer' : 'default' }}
+          onClick={argsRemaining > 0 ? () => setArgsExpanded(!argsExpanded) : undefined}
+        >
+          {argsRemaining > 0 ? (
+            <>
+              <div className="tool-output-header">
+                <span className="tool-output-label">
+                  {argsExpanded ? '▾ Arguments' : `▸ Arguments (${argsRemaining} more lines)`}
+                </span>
               </div>
-            )}
-          </div>
+              <div className="tool-arguments" style={{ margin: 0 }} onClick={(e) => e.stopPropagation()}>
+                {argsExpanded ? (
+                  <pre><code>{escapeHtml(argsText)}</code></pre>
+                ) : (
+                  <pre><code>{escapeHtml(argsLines.slice(0, 10).join('\n'))}</code></pre>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="tool-arguments" style={{ margin: '0 12px 12px 12px' }} onClick={(e) => e.stopPropagation()}>
+              <pre><code>{escapeHtml(argsText)}</code></pre>
+            </div>
+          )}
         </div>
       )}
 
       {output && (
-        <div className="tool-output-section">
-          <div className="tool-output-header">
-            <span className="tool-output-label">Output</span>
-            <button
-              onClick={handleCopyOutput}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleCopyOutput();
-                }
-              }}
-              className="tool-copy-button"
-              aria-label={outputCopied ? 'Copied output' : 'Copy output'}
-              title={outputCopied ? 'Copied!' : 'Copy output'}
-            >
-              {outputCopied ? (
-                <Check className="w-4 h-4" />
-              ) : (
-                <Copy className="w-4 h-4" />
-              )}
-            </button>
-          </div>
-          <div className="tool-output">
-            {outputRemaining > 0 && !outputExpanded ? (
-              <>
-                {outputLines.slice(0, 20).map((line, idx) => (
-                  <div key={idx}>{escapeHtml(line)}</div>
-                ))}
-                <div
-                  className="expand-hint"
-                  onClick={() => setOutputExpanded(true)}
-                  style={{ cursor: 'pointer' }}
-                >
-                  ... {outputRemaining} more lines
-                </div>
-              </>
-            ) : (
-              outputLines.map((line, idx) => (
-                <div key={idx}>{escapeHtml(line)}</div>
-              ))
-            )}
-            {outputRemaining > 0 && outputExpanded && (
-              <div
-                className="expand-hint"
-                onClick={() => setOutputExpanded(false)}
-                style={{ cursor: 'pointer' }}
-              >
-                Show less
+        <div
+          className="tool-output-wrapper"
+          style={{ cursor: outputRemaining > 0 ? 'pointer' : 'default' }}
+          onClick={outputRemaining > 0 ? () => setOutputExpanded(!outputExpanded) : undefined}
+        >
+          {outputRemaining > 0 ? (
+            <>
+              <div className="tool-output-header">
+                <span className="tool-output-label">
+                  {outputExpanded ? '▾ Output' : `▸ Output (${outputRemaining} more lines)`}
+                </span>
               </div>
-            )}
-          </div>
+              <div className="tool-output" onClick={(e) => e.stopPropagation()}>
+                {outputExpanded ? (
+                  outputLines.map((line, idx) => (
+                    <div key={idx}>{escapeHtml(line)}</div>
+                  ))
+                ) : (
+                  outputLines.slice(0, 20).map((line, idx) => (
+                    <div key={idx}>{escapeHtml(line)}</div>
+                  ))
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="tool-output" style={{ paddingTop: '8px' }} onClick={(e) => e.stopPropagation()}>
+              {outputLines.map((line, idx) => (
+                <div key={idx}>{escapeHtml(line)}</div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

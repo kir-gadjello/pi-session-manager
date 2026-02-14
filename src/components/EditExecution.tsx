@@ -3,6 +3,8 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { escapeHtml } from '../utils/markdown'
 import { shortenPath, formatDate } from '../utils/format'
+import { useTheme } from '../hooks/useAppearance'
+import { useIsMobile } from '../hooks/useIsMobile'
 
 interface EditExecutionProps {
   filePath: string
@@ -20,6 +22,9 @@ export default function EditExecution({
   expanded = false,
 }: EditExecutionProps) {
   const { t } = useTranslation()
+  const { theme } = useTheme()
+  const isMobile = useIsMobile()
+  const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
   const [localExpanded, setLocalExpanded] = useState(false)
   const [copied, setCopied] = useState(false)
   const displayPath = shortenPath(filePath)
@@ -152,8 +157,8 @@ export default function EditExecution({
             newFile={newFile}
             options={{
               theme: { dark: 'pierre-dark', light: 'pierre-light' },
-              themeType: 'dark',
-              diffStyle: 'split',
+              themeType: isDark ? 'dark' : 'light',
+              diffStyle: isMobile ? 'unified' : 'split',
               overflow: 'wrap',
             }}
           />
@@ -225,25 +230,21 @@ export default function EditExecution({
       </div>
 
       {diff && (
-        <div className="tool-diff-wrapper">
+        <div
+          className="tool-diff-wrapper"
+          onClick={() => setLocalExpanded(!localExpanded)}
+          style={{ cursor: 'pointer' }}
+        >
           <div className="tool-diff-actions">
+            <span style={{ color: 'var(--muted)', fontSize: '11px' }}>
+              {localExpanded ? '▾ Diff' : '▸ Diff'}
+            </span>
+            <div style={{ flex: 1 }} />
             <button
-              onClick={() => setLocalExpanded(!localExpanded)}
-              className="tool-action-button"
-              title={localExpanded ? t('components.editExecution.collapse') : t('components.editExecution.expand')}
-            >
-              {localExpanded ? (
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              ) : (
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                </svg>
-              )}
-            </button>
-            <button
-              onClick={copyDiffToClipboard}
+              onClick={(e) => {
+                e.stopPropagation()
+                copyDiffToClipboard()
+              }}
               className="tool-action-button"
               title={copied ? t('components.editExecution.copied') : t('components.editExecution.copyDiff')}
             >
@@ -258,7 +259,7 @@ export default function EditExecution({
               )}
             </button>
           </div>
-          {localExpanded && renderDiff()}
+          {localExpanded && <div onClick={(e) => e.stopPropagation()}>{renderDiff()}</div>}
         </div>
       )}
 
@@ -269,7 +270,7 @@ export default function EditExecution({
       )}
 
       {!diff && !output && (
-        <div className="tool-output" style={{ color: '#6a6f85', fontStyle: 'italic' }}>
+        <div className="tool-output" style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
           {t('components.editExecution.noChanges')}
         </div>
       )}

@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '../transport'
 import { useTranslation } from 'react-i18next'
 import { BarChart3, Clock, RefreshCw, Activity, Zap, DollarSign } from 'lucide-react'
-import type { SessionInfo, SessionStats } from '../types'
+
+import type { SessionInfo, SessionStats, SessionStatsInput } from '../types'
 import { getDemoStats } from '../hooks/useDemoMode'
 import StatCard from './dashboard/StatCard'
 import ActivityHeatmap from './dashboard/ActivityHeatmap'
@@ -13,10 +14,12 @@ import TopModelsChart from './dashboard/TopModelsChart'
 import TimeDistribution from './dashboard/TimeDistribution'
 import TokenTrendChart from './dashboard/TokenTrendChart'
 import { DashboardSkeleton } from './Skeleton'
+import { getCachedSettings } from '../utils/settingsApi'
 
 interface DashboardProps {
   sessions: SessionInfo[]
   onSessionSelect?: (session: SessionInfo) => void
+  onProjectSelect?: (projectPath: string) => void
   projectName?: string
   loading?: boolean
 }
@@ -27,7 +30,7 @@ function getProjectName(path: string): string {
   return parts[parts.length - 1] || path
 }
 
-export default function Dashboard({ sessions, onSessionSelect, projectName, loading: parentLoading = false }: DashboardProps) {
+export default function Dashboard({ sessions, onSessionSelect, onProjectSelect, projectName, loading: parentLoading = false }: DashboardProps) {
   const { t } = useTranslation()
   const [stats, setStats] = useState<SessionStats | null>(null)
   const [showSkeleton, setShowSkeleton] = useState(true)
@@ -70,16 +73,30 @@ export default function Dashboard({ sessions, onSessionSelect, projectName, load
 
     try {
       // Check if in demo mode
-      const isDemoMode = localStorage.getItem('pi-session-manager-settings')
-        ? JSON.parse(localStorage.getItem('pi-session-manager-settings') || '{}')?.advanced?.demoMode === true
-        : false
+      const isDemoMode = getCachedSettings()?.advanced?.demoMode === true
 
       if (isDemoMode) {
         // Use demo stats in demo mode
         const result = getDemoStats()
         setStats(result)
       } else {
-        const result = await invoke<SessionStats>('get_session_stats', { sessions })
+        const statsSessions: SessionStatsInput[] = sessions.map((session) => ({
+          path: session.path,
+          cwd: session.cwd,
+          modified: session.modified,
+          message_count: session.message_count,
+        }))
+        let result: SessionStats
+        try {
+          result = await invoke<SessionStats>('get_session_stats_light', { sessions: statsSessions })
+        } catch (error: any) {
+          const message = typeof error === 'string' ? error : error?.message
+          if (message && String(message).includes('get_session_stats_light')) {
+            result = await invoke<SessionStats>('get_session_stats', { sessions })
+          } else {
+            throw error
+          }
+        }
         setStats(result)
       }
     } catch (error) {
@@ -126,61 +143,35 @@ export default function Dashboard({ sessions, onSessionSelect, projectName, load
     },
   }
 
-  const tokenValue = (() => {
-    const { total_input, total_output } = displayStats.token_details
-    const format = (n: number): string => {
-      if (n === 0) return '0'
-      if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`
-      if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
-      return n.toString()
-    }
-    const fInput = format(total_input)
-    const fOutput = format(total_output)
-    const total = total_input + total_output
-    const fTotal = format(total)
-
-    return (
-      <div className="flex flex-col items-start gap-0.5">
-        <div className="flex items-center gap-3 text-xs">
-          {total_input > 0 && <span className="text-[#569cd6]">↑{fInput}</span>}
-          {total_output > 0 && <span className="text-[#7ee787]">↓{fOutput}</span>}
-        </div>
-        <div className="bg-gradient-to-r from-[#c792ea] to-[#d4a8f0] bg-clip-text text-transparent font-bold">
-          {fTotal}
-        </div>
-      </div>
-    )
-  })()
-
   return (
-    <div className="h-full overflow-y-auto p-4">
+    <div className="h-full overflow-y-auto p-3 md:p-4">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h1 className="text-2xl font-bold text-gradient mb-0.5">
+      <div className="flex items-center justify-between mb-4 gap-2">
+        <div className="min-w-0 flex-1">
+          <h1 className="text-lg md:text-2xl font-bold text-gradient mb-0.5 truncate">
             {projectName ? (
               <>
-                {t('dashboard.title')} - <span className="text-[#569cd6]">{getProjectName(projectName)}</span>
+                {t('dashboard.title')} - <span className="text-info">{getProjectName(projectName)}</span>
               </>
             ) : (
               t('dashboard.title')
             )}
           </h1>
-          <p className="text-xs text-[#6a6f85]">
+          <p className="text-xs text-muted-foreground truncate">
             {projectName ? t('dashboard.projectSubtitle') : t('dashboard.subtitle')}
           </p>
         </div>
         <button
           onClick={loadStats}
-          className="flex items-center gap-2 px-3 py-2 glass-card rounded-lg text-xs transition-all duration-300 hover:scale-105 active:scale-95 group"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 md:gap-2 md:px-3 md:py-2 glass-card rounded-lg text-xs transition-all duration-300 hover:scale-105 active:scale-95 group flex-shrink-0"
         >
           <RefreshCw className="h-3.5 w-3.5 transition-transform duration-500 group-hover:rotate-180" />
-          {t('common.refresh')}
+          <span className="hidden md:inline">{t('common.refresh')}</span>
         </button>
       </div>
 
       {/* Stats Grid - Compact - 5 cards */}
-      <div className="grid grid-cols-5 gap-3 mb-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 md:gap-3 mb-4">
         <StatCard
           icon={BarChart3}
           label={t('components.displayStats.cards.sessions')}
@@ -202,31 +193,38 @@ export default function Dashboard({ sessions, onSessionSelect, projectName, load
         <StatCard
           icon={Zap}
           label={t('components.displayStats.cards.totalTokens')}
-          value={tokenValue}
+          value={displayStats.total_tokens > 1000000 
+            ? `${(displayStats.total_tokens / 1000000).toFixed(1)}M` 
+            : displayStats.total_tokens > 1000 
+              ? `${(displayStats.total_tokens / 1000).toFixed(1)}k`
+              : displayStats.total_tokens
+          }
           color="#c792ea"
         />
-        <StatCard
-          icon={DollarSign}
-          label={t('components.displayStats.cards.totalCost')}
-          value={displayStats.token_details.total_cost < 0.01 
-            ? `$${displayStats.token_details.total_cost.toFixed(4)}` 
-            : displayStats.token_details.total_cost < 1
-              ? `$${displayStats.token_details.total_cost.toFixed(3)}`
-              : `$${displayStats.token_details.total_cost.toFixed(2)}`
-          }
-          color="#ff6b6b"
-        />
+        <div className="col-span-2 md:col-span-1">
+          <StatCard
+            icon={DollarSign}
+            label={t('components.displayStats.cards.totalCost')}
+            value={displayStats.token_details.total_cost < 0.01 
+              ? `$${displayStats.token_details.total_cost.toFixed(4)}` 
+              : displayStats.token_details.total_cost < 1
+                ? `$${displayStats.token_details.total_cost.toFixed(3)}`
+                : `$${displayStats.token_details.total_cost.toFixed(2)}`
+            }
+            color="#ff6b6b"
+          />
+        </div>
       </div>
 
       {/* Main Grid - Dense Layout */}
-      <div className="grid grid-cols-12 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
         {/* Left Column - 8 cols */}
-        <div className="col-span-8 space-y-3">
+        <div className="md:col-span-8 space-y-3">
           {/* Token Trend Chart - Full Width */}
           <TokenTrendChart stats={displayStats} days={30} />
 
           {/* Message Distribution + Heatmap */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <MessageDistribution stats={displayStats} />
             <ActivityHeatmap data={displayStats.heatmap_data} size="mini" showLabels={false} />
           </div>
@@ -236,12 +234,12 @@ export default function Dashboard({ sessions, onSessionSelect, projectName, load
         </div>
 
         {/* Right Column - 4 cols */}
-        <div className="col-span-4 space-y-3">
+        <div className="md:col-span-4 space-y-3">
           {/* Top Models */}
           <TopModelsChart stats={displayStats} limit={5} />
 
           {/* Projects */}
-          <ProjectsChart stats={displayStats} limit={5} />
+          <ProjectsChart stats={displayStats} sessions={sessions} limit={5} onProjectSelect={onProjectSelect} />
 
           {/* Time Distribution */}
           <TimeDistribution stats={displayStats} type="hourly" />

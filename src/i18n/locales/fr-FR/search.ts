@@ -1,0 +1,32 @@
+export const search = {
+  panel: {
+    placeholder: 'Rechercher des sessions...',
+    searching: 'Recherche en cours...',
+    results: '{count} résultat{count, plural, =1 {} other{s}}',
+  },
+  clear: 'Effacer',
+  clearAll: 'Effacer la recherche (Esc)',
+  placeholder: 'Rechercher dans la session...',
+  noResults: 'Aucun résultat',
+  previous: 'Résultat précédent (Shift+Enter)',
+  next: 'Résultat suivant (Enter)',
+  close: 'Fermer la recherche (Esc)',
+  searching: 'Recherche en cours...',
+  results: '{count} résultats',
+  fullText: {
+    placeholder: 'Rechercher dans toutes les sessions...',
+    resultsFound: '{{count}} correspondances trouvées',
+    filters: 'Filtres',
+    role: {
+      all: 'Tous',
+      user: 'Utilisateur',
+      assistant: 'IA',
+    },
+    globPlaceholder: 'Glob de chemin (ex. **/src/**)',
+    startTyping: 'Tapez pour démarrer la recherche en texte intégral',
+    sortScore: 'Pertinence',
+    sortNewest: 'Plus récent',
+    sortOldest: 'Plus ancien',
+    sortTitle: 'Trier par',
+  },
+} as const

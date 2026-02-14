@@ -1,6 +1,7 @@
 use crate::models::SessionInfo;
 use crate::session_parser::parse_session_details;
 use crate::sqlite_cache;
+use crate::write_buffer;
 use chrono::{Datelike, Timelike, Weekday};
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -87,7 +88,7 @@ pub fn calculate_stats(sessions: &[SessionInfo]) -> SessionStats {
 pub fn calculate_stats_from_inputs(sessions: &[SessionStatsInput]) -> SessionStats {
     let total_sessions = sessions.len();
 
-    println!("Calculating stats for {} sessions", total_sessions);
+    log::trace!("Calculating stats for {total_sessions} sessions");
 
     let conn = sqlite_cache::init_db().ok();
 
@@ -116,6 +117,53 @@ pub fn calculate_stats_from_inputs(sessions: &[SessionStatsInput]) -> SessionSta
         let project = extract_project_name(&session.cwd);
         *sessions_by_project.entry(project).or_insert(0) += 1;
 
+        // 1. 先检查内存缓冲（最快）
+        let memory_cached = write_buffer::get_buffered_details(&session.path)
+            .filter(|(_, file_modified)| *file_modified >= session_modified);
+
+        if let Some((details, _)) = memory_cached {
+            for model in &details.models {
+                *sessions_by_model.entry(model.clone()).or_insert(0) += 1;
+            }
+
+            total_user_messages += details.user_messages;
+            total_assistant_messages += details.assistant_messages;
+            total_messages += details.user_messages + details.assistant_messages;
+
+            total_input += details.input_tokens as usize;
+            total_output += details.output_tokens as usize;
+            total_cache_read += details.cache_read_tokens as usize;
+            total_cache_write += details.cache_write_tokens as usize;
+            total_cost += details.input_cost
+                + details.output_cost
+                + details.cache_read_cost
+                + details.cache_write_cost;
+
+            let date = session_modified.format("%Y-%m-%d").to_string();
+            *messages_by_date.entry(date.clone()).or_insert(0) +=
+                details.user_messages + details.assistant_messages;
+
+            let hour = session_modified.hour();
+            *messages_by_hour.entry(hour.to_string()).or_insert(0) +=
+                details.user_messages + details.assistant_messages;
+
+            let weekday = session_modified.weekday();
+            let day_name = match weekday {
+                Weekday::Mon => "Monday",
+                Weekday::Tue => "Tuesday",
+                Weekday::Wed => "Wednesday",
+                Weekday::Thu => "Thursday",
+                Weekday::Fri => "Friday",
+                Weekday::Sat => "Saturday",
+                Weekday::Sun => "Sunday",
+            };
+            *messages_by_day_of_week
+                .entry(day_name.to_string())
+                .or_insert(0) += details.user_messages + details.assistant_messages;
+            continue;
+        }
+
+        // 2. 再检查数据库缓存
         let cached_details = conn.as_ref().and_then(|conn| {
             sqlite_cache::get_session_details_cache(conn, &session.path)
                 .ok()
@@ -171,14 +219,8 @@ pub fn calculate_stats_from_inputs(sessions: &[SessionStatsInput]) -> SessionSta
         if let Ok(content) = std::fs::read_to_string(&session.path) {
             let session_stats = parse_session_details(&content);
 
-            if let Some(conn) = conn.as_ref() {
-                let _ = sqlite_cache::upsert_session_details_cache(
-                    conn,
-                    &session.path,
-                    session_modified,
-                    &session_stats,
-                );
-            }
+            // 使用内存缓冲写入，减少数据库写入频率
+            write_buffer::buffer_details_write(&session.path, session_modified, &session_stats);
 
             for model in &session_stats.models {
                 *sessions_by_model.entry(model.clone()).or_insert(0) += 1;
@@ -257,7 +299,7 @@ pub fn calculate_stats_from_inputs(sessions: &[SessionStatsInput]) -> SessionSta
     // Generate time distribution
     let time_distribution = generate_time_distribution(&messages_by_hour);
 
-    println!(
+    log::trace!(
         "Stats: {} user messages, {} assistant messages, {} total tokens",
         total_user_messages,
         total_assistant_messages,
@@ -290,7 +332,7 @@ pub fn calculate_stats_from_inputs(sessions: &[SessionStatsInput]) -> SessionSta
 }
 
 fn extract_project_name(cwd: &str) -> String {
-    cwd.split('/').last().unwrap_or("unknown").to_string()
+    cwd.split('/').next_back().unwrap_or("unknown").to_string()
 }
 
 fn generate_heatmap_data(messages_by_date: &HashMap<String, usize>) -> Vec<HeatmapPoint> {

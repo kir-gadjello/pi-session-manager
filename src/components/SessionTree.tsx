@@ -1,7 +1,9 @@
-import { useState, useMemo, useCallback, useEffect, forwardRef, useRef, useImperativeHandle, type ReactNode } from 'react'
+import { useState, useMemo, useCallback, useEffect, forwardRef, useRef, useImperativeHandle, lazy, Suspense, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { SessionEntry } from '../types'
 import SessionTreeSearch, { type SessionTreeSearchRef } from './SessionTreeSearch'
+
+const SessionFlowView = lazy(() => import('./SessionFlowView'))
 
 // 高亮搜索关键词
 function highlightText(text: string, tokens: string[]): ReactNode {
@@ -50,7 +52,7 @@ interface SessionTreeProps {
   entries: SessionEntry[]
   activeLeafId?: string
   onNodeClick?: (leafId: string, targetId: string) => void
-  filter?: 'default' | 'no-tools' | 'user-only' | 'labeled-only' | 'all' | 'read-tools' | 'edit-tools'
+  filter?: 'default' | 'no-tools' | 'user-only' | 'labeled-only' | 'all' | 'read-tools' | 'edit-tools' | 'write-tools'
 }
 
 interface TreeNodeData {
@@ -67,13 +69,15 @@ interface FlatNode {
   gutters: Array<{ position: number; show: boolean }>
   isVirtualRootChild: boolean
   multipleRoots: boolean
+  hasChildren: boolean
+  isBranchPoint: boolean
 }
 
 const SessionTree = forwardRef<SessionTreeRef, SessionTreeProps>(function SessionTree({
   entries,
   activeLeafId,
   onNodeClick,
-  filter = 'default'
+  filter = 'no-tools'
 }: SessionTreeProps,
 ref
 ) {
@@ -83,12 +87,27 @@ ref
   const [currentFilter, setCurrentFilter] = useState(filter)
   const [currentResultIndex, setCurrentResultIndex] = useState(0)
   const [searchResults, setSearchResults] = useState<string[]>([])
+  const [collapsedNodes, setCollapsedNodes] = useState<Set<string>>(new Set())
+  const [viewMode, setViewMode] = useState<'tree' | 'flow'>('tree')
 
   useImperativeHandle(ref, () => ({
     focusSearch: () => {
       searchRef.current?.focus()
     }
   }))
+
+  const toggleCollapse = useCallback((nodeId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setCollapsedNodes(prev => {
+      const next = new Set(prev)
+      if (next.has(nodeId)) {
+        next.delete(nodeId)
+      } else {
+        next.add(nodeId)
+      }
+      return next
+    })
+  }, [])
 
   // Build tree structure
   const treeData = useMemo(() => {
@@ -180,8 +199,15 @@ ref
 
     while (stack.length > 0) {
       const [node, indent, justBranched, showConnector, isLast, gutters, isVirtualRootChild] = stack.pop()!
+      const hasChildren = node.children.length > 0
+      const isBranchPoint = node.children.length > 1
 
-      result.push({ node, indent, showConnector, isLast, gutters, isVirtualRootChild, multipleRoots })
+      result.push({ node, indent, showConnector, isLast, gutters, isVirtualRootChild, multipleRoots, hasChildren, isBranchPoint })
+
+      // 如果当前节点被折叠，跳过子节点
+      if (collapsedNodes.has(node.entry.id)) {
+        continue
+      }
 
       const children = node.children
       const multipleChildren = children.length > 1
@@ -217,7 +243,7 @@ ref
     }
 
     return result
-  }, [treeData, activePathIds])
+  }, [treeData, activePathIds, collapsedNodes])
 
   // Build tree prefix (ASCII art)
   const buildTreePrefix = (flatNode: FlatNode): string => {
@@ -346,6 +372,13 @@ ref
           if (entry.type === 'message' && entry.message?.role === 'assistant') {
             const content = Array.isArray(entry.message.content) ? entry.message.content : []
             return content.some((c: any) => c.type === 'toolCall' && c.name === 'edit')
+          }
+          return false
+
+        case 'write-tools':
+          if (entry.type === 'message' && entry.message?.role === 'assistant') {
+            const content = Array.isArray(entry.message.content) ? entry.message.content : []
+            return content.some((c: any) => c.type === 'toolCall' && c.name === 'write')
           }
           return false
 
@@ -561,6 +594,25 @@ ref
 
 
 
+  // toolResult 不会单独渲染，需要跳转到对应的 assistant 消息（包含该 toolCall）
+  const resolveScrollTarget = useCallback((entryId: string): string => {
+    const entry = entries.find(e => e.id === entryId)
+    if (!entry || entry.type !== 'message' || entry.message?.role !== 'toolResult') {
+      return entryId
+    }
+    const content = Array.isArray(entry.message.content) ? entry.message.content : []
+    const toolResultContent = content.find((c: any) => c.type === 'toolResult')
+    if (!toolResultContent?.id) return entryId
+
+    const assistantEntry = entries.find(e =>
+      e.type === 'message' &&
+      e.message?.role === 'assistant' &&
+      Array.isArray(e.message.content) &&
+      e.message.content.some((c: any) => c.type === 'toolCall' && c.id === toolResultContent.id)
+    )
+    return assistantEntry ? assistantEntry.id : entryId
+  }, [entries])
+
   // 搜索导航
   const handleSearchNext = useCallback(() => {
     if (searchResults.length === 0) return
@@ -568,9 +620,9 @@ ref
     setCurrentResultIndex(newIndex)
     const entryId = searchResults[newIndex]
     if (onNodeClick) {
-      onNodeClick(entryId, entryId)
+      onNodeClick(entryId, resolveScrollTarget(entryId))
     }
-  }, [searchResults, currentResultIndex, onNodeClick])
+  }, [searchResults, currentResultIndex, onNodeClick, resolveScrollTarget])
 
   const handleSearchPrevious = useCallback(() => {
     if (searchResults.length === 0) return
@@ -578,9 +630,9 @@ ref
     setCurrentResultIndex(newIndex)
     const entryId = searchResults[newIndex]
     if (onNodeClick) {
-      onNodeClick(entryId, entryId)
+      onNodeClick(entryId, resolveScrollTarget(entryId))
     }
-  }, [searchResults, currentResultIndex, onNodeClick])
+  }, [searchResults, currentResultIndex, onNodeClick, resolveScrollTarget])
 
   const handleSearchClose = useCallback(() => {
     setSearchQuery('')
@@ -592,31 +644,33 @@ ref
     setSearchQuery(query)
   }, [])
 
+  // Find the newest leaf reachable from a given node (follow last child at each level)
+  const findNewestLeaf = useCallback((nodeId: string): string => {
+    // Build a lookup from treeData
+    const nodeMap = new Map<string, TreeNodeData>()
+    function mapNodes(node: TreeNodeData) {
+      nodeMap.set(node.entry.id, node)
+      node.children.forEach(mapNodes)
+    }
+    treeData.forEach(mapNodes)
+
+    const node = nodeMap.get(nodeId)
+    if (!node) return nodeId
+
+    let current = node
+    while (current.children.length > 0) {
+      current = current.children[current.children.length - 1]
+    }
+    return current.entry.id
+  }, [treeData])
+
   const handleNodeClick = (flatNode: FlatNode) => {
     const entry = flatNode.node.entry
-    let targetId = entry.id
-
-    // toolResult 不会单独渲染，需要跳转到对应的 assistant 消息
-    if (entry.type === 'message' && entry.message?.role === 'toolResult') {
-      const content = Array.isArray(entry.message.content) ? entry.message.content : []
-      const toolResultContent = content.find((c: any) => c.type === 'toolResult')
-
-      if (toolResultContent?.id) {
-        // 找到包含对应 toolCall 的 assistant 消息
-        const assistantEntry = entries.find(e =>
-          e.type === 'message' &&
-          e.message?.role === 'assistant' &&
-          Array.isArray(e.message.content) &&
-          e.message.content.some((c: any) => c.type === 'toolCall' && c.id === toolResultContent.id)
-        )
-        if (assistantEntry) {
-          targetId = assistantEntry.id
-        }
-      }
-    }
+    const leafId = findNewestLeaf(entry.id)
+    const scrollTargetId = resolveScrollTarget(entry.id)
 
     if (onNodeClick) {
-      onNodeClick(entry.id, targetId)
+      onNodeClick(leafId, scrollTargetId)
     }
   }
 
@@ -632,6 +686,22 @@ ref
         currentIndex={currentResultIndex}
         totalResults={searchResults.length}
       />
+
+      {/* View mode toggle */}
+      <div className="sidebar-filters" style={{ borderBottom: 'none', paddingBottom: 0 }}>
+        <button
+          className={`filter-btn ${viewMode === 'tree' ? 'active' : ''}`}
+          onClick={() => setViewMode('tree')}
+        >
+          Tree
+        </button>
+        <button
+          className={`filter-btn ${viewMode === 'flow' ? 'active' : ''}`}
+          onClick={() => setViewMode('flow')}
+        >
+          Flow
+        </button>
+      </div>
 
       {/* Filters */}
       <div className="sidebar-filters">
@@ -677,7 +747,27 @@ ref
         >
           Edit
         </button>
+        <button
+          className={`filter-btn ${currentFilter === 'write-tools' ? 'active' : ''}`}
+          onClick={() => setCurrentFilter('write-tools')}
+        >
+          Write
+        </button>
       </div>
+
+      {viewMode === 'flow' ? (
+        <div className="flex-1 min-h-0">
+          <Suspense fallback={<div style={{ padding: 12, color: 'var(--color-text-secondary)' }}>{t('session.tree.loading')}</div>}>
+            <SessionFlowView
+              entries={entries}
+              activeLeafId={activeLeafId}
+              onNodeClick={onNodeClick}
+              filter={currentFilter}
+            />
+          </Suspense>
+        </div>
+      ) : (
+      <>
 
       {/* Tree */}
       <div className="tree-container">
@@ -690,12 +780,12 @@ ref
           const marker = isInPath ? '• ' : '· '
           const displayText = getNodeDisplayText(entry, label)
           const roleClass = getNodeRoleClass(entry)
+          const isCollapsed = collapsedNodes.has(entry.id)
 
           const isSearchMatch = searchResults.includes(entry.id)
           const isCurrentMatch = isSearchMatch && searchResults[currentResultIndex] === entry.id
           const searchTokens = searchQuery.toLowerCase().split(/\s+/).filter(Boolean)
 
-          // 获取匹配摘要
           let snippet: string | null = null
           if (isSearchMatch && searchQuery) {
             const fullText = getFullText(entry, label)
@@ -709,8 +799,20 @@ ref
               onClick={() => handleNodeClick(flatNode)}
             >
               <span className="tree-prefix">{prefix}</span>
-              <span className="tree-marker">{marker}</span>
+              {flatNode.isBranchPoint ? (
+                <span
+                  className="tree-toggle"
+                  onClick={(e) => toggleCollapse(entry.id, e)}
+                >
+                  {isCollapsed ? '▸ ' : '▾ '}
+                </span>
+              ) : (
+                <span className="tree-marker">{marker}</span>
+              )}
               <span className={`tree-content ${roleClass}`}>{displayText}</span>
+              {isCollapsed && flatNode.isBranchPoint && (
+                <span className="tree-collapsed-hint">...</span>
+              )}
               {snippet && (
                 <span className="tree-snippet">{highlightText(snippet, searchTokens)}</span>
               )}
@@ -723,6 +825,8 @@ ref
       <div className="tree-status">
         {filteredNodes.length} / {flatNodes.length} {t('session.tree.nodes')}
       </div>
+      </>
+      )}
     </div>
   )
 })

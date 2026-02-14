@@ -7,6 +7,8 @@ import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import SessionList from './SessionList'
+import type { TerminalType } from './settings/types'
+import { getPlatformDefaults } from './settings/types'
 
 interface ProjectListProps {
   sessions: SessionInfo[]
@@ -16,7 +18,7 @@ interface ProjectListProps {
   onSelectProject?: (project: string | null) => void
   onDeleteSession?: (session: SessionInfo) => void
   loading: boolean
-  terminal?: 'iterm2' | 'terminal' | 'vscode' | 'custom'
+  terminal?: TerminalType
   piPath?: string
   customCommand?: string
   getBadgeType?: (sessionId: string) => 'new' | 'updated' | null
@@ -42,7 +44,7 @@ export default function ProjectList({
   onSelectProject,
   onDeleteSession,
   loading,
-  terminal = 'iterm2',
+  terminal = getPlatformDefaults().defaultTerminal,
   piPath,
   customCommand,
   getBadgeType,
@@ -132,7 +134,7 @@ export default function ProjectList({
                 key={project.dir}
                 data-index={virtualRow.index}
                 ref={projectsVirtualizer.measureElement}
-                className="px-3 py-2 hover:bg-[#1a1b26] cursor-pointer transition-colors border-b border-border/10 group"
+                className="px-3 py-2 hover:bg-background cursor-pointer transition-colors border-b border-border/10 group"
                 style={{
                   position: 'absolute',
                   top: 0,
@@ -230,7 +232,7 @@ function formatDirectory(path: string): string {
 }
 
 function getDirectoryName(cwd: string): string {
-  if (!cwd || cwd === 'Unknown' || cwd === '未知') {
+  if (!cwd || cwd === 'Unknown') {
     return cwd || 'Unknown Directory'
   }
 

@@ -1,4 +1,5 @@
 import { Calendar } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { format, parseISO, getDay } from 'date-fns'
 import type { HeatmapPoint } from '../../types'
 
@@ -20,9 +21,11 @@ const HEATMAP_COLORS = [
 
 export default function ActivityHeatmap({
   data,
-  title = 'Heatmap',
+  title,
   size = 'full',
 }: ActivityHeatmapProps) {
+  const { t } = useTranslation()
+  const displayTitle = title || t('components.activityHeatmap.title')
   const weeks = 20 // Show last 20 weeks
   const daysPerWeek = 7
   const cellSize = size === 'mini' ? 'w-3 h-3' : 'w-4 h-4'
@@ -83,19 +86,19 @@ export default function ActivityHeatmap({
   return (
     <div className="glass-card rounded-xl p-4 relative overflow-hidden group">
       {/* Subtle gradient overlay */}
-      <div className="absolute inset-0 bg-gradient-to-br from-[#46c492]/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-br from-success/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
 
       <div className="relative z-10">
-        {title && (
+        {displayTitle && (
           <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-medium flex items-center gap-2 text-white">
-              <div className="p-1.5 rounded-lg bg-[#46c492]/10">
-                <Calendar className="h-4 w-4 text-[#46c492]" />
+            <h3 className="text-sm font-medium flex items-center gap-2 text-foreground">
+              <div className="p-1.5 rounded-lg bg-success/10">
+                <Calendar className="h-4 w-4 text-success" />
               </div>
-              {title}
+              {displayTitle}
             </h3>
-            <div className="flex items-center gap-2 text-xs text-[#6a6f85]">
-              <span>Less</span>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>{t('components.activityHeatmap.less')}</span>
               <div className="flex gap-0.5">
                 {HEATMAP_COLORS.slice(1).map((color, i) => (
                   <div
@@ -105,7 +108,7 @@ export default function ActivityHeatmap({
                   />
                 ))}
               </div>
-              <span>More</span>
+              <span>{t('components.activityHeatmap.more')}</span>
             </div>
           </div>
         )}
@@ -132,9 +135,9 @@ export default function ActivityHeatmap({
         </div>
 
         {size === 'full' && (
-          <div className="flex items-center justify-between mt-3 pt-3 border-t border-white/5">
-            <div className="flex items-center gap-4 text-xs text-[#6a6f85]">
-              <span>Active Days: <strong className="text-white">{data.filter(p => p.level > 0).length}</strong></span>
+          <div className="flex items-center justify-between mt-3 pt-3 border-t border-foreground/5">
+            <div className="flex items-center gap-4 text-xs text-muted-foreground">
+              <span>Active Days: <strong className="text-foreground">{data.filter(p => p.level > 0).length}</strong></span>
             </div>
           </div>
         )}

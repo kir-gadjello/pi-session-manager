@@ -5,6 +5,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_export_html() {
+        // Skip if pi CLI is not available (e.g., in CI)
+        if std::process::Command::new("pi")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("Skipping test_export_html: pi CLI not found");
+            return;
+        }
+
         // 创建一个临时会话文件
         let temp_session = NamedTempFile::with_suffix(".jsonl").unwrap();
         let session_content = r#"{"type":"session","name":"Test Session","timestamp":"2024-01-01T00:00:00Z"}
@@ -22,7 +32,7 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_ok(), "Export should succeed: {:?}", result);
+        assert!(result.is_ok(), "Export should succeed: {result:?}");
 
         // 验证输出文件存在且不为空
         let output_content = fs::read_to_string(temp_output.path()).unwrap();
@@ -56,7 +66,7 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_ok(), "Export should succeed: {:?}", result);
+        assert!(result.is_ok(), "Export should succeed: {result:?}");
 
         let output_content = fs::read_to_string(temp_output.path()).unwrap();
         assert!(!output_content.is_empty(), "Output should not be empty");
@@ -81,7 +91,7 @@ mod tests {
         )
         .await;
 
-        assert!(result.is_ok(), "Export should succeed: {:?}", result);
+        assert!(result.is_ok(), "Export should succeed: {result:?}");
 
         let output_content = fs::read_to_string(temp_output.path()).unwrap();
         assert!(!output_content.is_empty(), "Output should not be empty");

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Search, X, Loader2, User, Bot, FileText, Globe, ArrowUpDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke } from '../transport';
 import { shortenPath } from '../utils/format';
 import type { FullTextSearchHit, FullTextSearchResponse, SessionInfo } from '../types';
 

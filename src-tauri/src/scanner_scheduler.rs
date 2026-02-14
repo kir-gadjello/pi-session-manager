@@ -5,20 +5,18 @@ use chrono::{DateTime, Duration, Utc};
 use std::fs;
 use std::path::PathBuf;
 use tokio::time::{interval, Duration as TokioDuration};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 pub struct ScannerScheduler {
-    sessions_dir: PathBuf,
-    scan_interval: TokioDuration,
     config: Config,
+    scan_interval: TokioDuration,
 }
 
 impl ScannerScheduler {
-    pub fn new(sessions_dir: PathBuf, scan_interval_secs: u64, config: Config) -> Self {
+    pub fn new(_sessions_dir: PathBuf, scan_interval_secs: u64, config: Config) -> Self {
         Self {
-            sessions_dir,
-            scan_interval: TokioDuration::from_secs(scan_interval_secs),
             config,
+            scan_interval: TokioDuration::from_secs(scan_interval_secs),
         }
     }
 
@@ -51,22 +49,30 @@ impl ScannerScheduler {
         let mut added = 0;
         let mut skipped = 0;
 
-        if let Ok(entries) = fs::read_dir(&self.sessions_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    if let Ok(files) = fs::read_dir(&path) {
-                        for file in files.flatten() {
-                            let file_path = file.path();
-                            if file_path
-                                .extension()
-                                .map(|ext| ext == "jsonl")
-                                .unwrap_or(false)
-                            {
-                                match self.process_file(&conn, &file_path)? {
-                                    FileUpdateResult::Updated => updated += 1,
-                                    FileUpdateResult::Added => added += 1,
-                                    FileUpdateResult::Skipped => skipped += 1,
+        let all_dirs = scanner::get_all_session_dirs(&self.config);
+
+        for sessions_dir in &all_dirs {
+            if !sessions_dir.exists() {
+                continue;
+            }
+
+            if let Ok(entries) = fs::read_dir(sessions_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        if let Ok(files) = fs::read_dir(&path) {
+                            for file in files.flatten() {
+                                let file_path = file.path();
+                                if file_path
+                                    .extension()
+                                    .map(|ext| ext == "jsonl")
+                                    .unwrap_or(false)
+                                {
+                                    match self.process_file(&conn, &file_path)? {
+                                        FileUpdateResult::Updated => updated += 1,
+                                        FileUpdateResult::Added => added += 1,
+                                        FileUpdateResult::Skipped => skipped += 1,
+                                    }
                                 }
                             }
                         }
@@ -82,8 +88,7 @@ impl ScannerScheduler {
         );
 
         Ok(format!(
-            "Scanned: +{} added, ~{} updated, {} skipped",
-            added, updated, skipped
+            "Scanned: +{added} added, ~{updated} updated, {skipped} skipped"
         ))
     }
 
@@ -95,11 +100,11 @@ impl ScannerScheduler {
         let path_str = file_path.to_string_lossy().to_string();
 
         let metadata =
-            fs::metadata(file_path).map_err(|e| format!("Failed to get metadata: {}", e))?;
+            fs::metadata(file_path).map_err(|e| format!("Failed to get metadata: {e}"))?;
         let file_modified = DateTime::from(
             metadata
                 .modified()
-                .map_err(|e| format!("Failed to get modified time: {}", e))?,
+                .map_err(|e| format!("Failed to get modified time: {e}"))?,
         );
 
         let cached_mtime = sqlite_cache::get_cached_file_modified(conn, &path_str)?;
@@ -110,8 +115,12 @@ impl ScannerScheduler {
             }
         }
 
-        if let Ok(session) = scanner::parse_session_info(file_path) {
-            sqlite_cache::upsert_session(conn, &session, file_modified)?;
+        if let Ok((info, entries)) = scanner::parse_session_info(file_path) {
+            // Upsert message entries for FTS
+            if let Err(e) = sqlite_cache::upsert_message_entries(conn, &info.path, &entries) {
+                log::warn!("Failed to upsert message entries for {}: {}", info.path, e);
+            }
+            sqlite_cache::upsert_session(conn, &info, file_modified)?;
             return Ok(if cached_mtime.is_some() {
                 FileUpdateResult::Updated
             } else {
@@ -133,7 +142,7 @@ impl ScannerScheduler {
                 info!("Auto cleanup: removed {} missing session records", deleted);
             }
 
-            return Ok(format!("Auto cleanup: {} records removed", deleted));
+            return Ok(format!("Auto cleanup: {deleted} records removed"));
         }
 
         Ok("Auto cleanup: disabled".to_string())

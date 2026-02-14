@@ -22,7 +22,7 @@ pub struct ModelTestResult {
     pub error_msg: Option<String>,
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "gui", tauri::command)]
 pub async fn list_models(search: Option<String>) -> Result<Vec<ModelInfo>, String> {
     let mut args = vec!["--list-models".to_string()];
     if let Some(query) = search {
@@ -32,11 +32,11 @@ pub async fn list_models(search: Option<String>) -> Result<Vec<ModelInfo>, Strin
     let output = Command::new("pi")
         .args(&args)
         .output()
-        .map_err(|e| format!("Failed to execute pi --list-models: {}", e))?;
+        .map_err(|e| format!("Failed to execute pi --list-models: {e}"))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("pi --list-models failed: {}", stderr));
+        return Err(format!("pi --list-models failed: {stderr}"));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -72,7 +72,7 @@ pub async fn list_models(search: Option<String>) -> Result<Vec<ModelInfo>, Strin
     Ok(models)
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "gui", tauri::command)]
 pub async fn test_model(
     provider: String,
     model: String,
@@ -96,7 +96,7 @@ pub async fn test_model(
         .args(&args)
         .stdin(Stdio::piped())
         .output()
-        .map_err(|e| format!("Failed to execute pi: {}", e))?;
+        .map_err(|e| format!("Failed to execute pi: {e}"))?;
 
     let duration = start_time.elapsed().as_secs_f64();
 
@@ -121,7 +121,7 @@ pub async fn test_model(
     }
 }
 
-#[tauri::command]
+#[cfg_attr(feature = "gui", tauri::command)]
 pub async fn test_models_batch(
     models: Vec<(String, String)>,
     prompt: Option<String>,

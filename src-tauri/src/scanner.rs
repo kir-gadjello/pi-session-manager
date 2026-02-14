@@ -1,191 +1,283 @@
 use crate::config::Config;
-use crate::models::SessionInfo;
+use crate::models::{Content, Message, SessionEntry, SessionInfo, SessionsDiff};
 use crate::sqlite_cache;
+use crate::write_buffer;
 use chrono::{DateTime, Duration, Utc};
 use serde_json::Value;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+use tracing::{debug, error, info, trace, warn};
+
+/// Check if an error message indicates database corruption
+fn is_corruption_error(err: &str) -> bool {
+    err.contains("malformed")
+        || err.contains("disk image")
+        || err.contains("not a database")
+        || err.contains("vtable constructor failed")
+}
+
+static SCAN_CACHE: Mutex<Option<Vec<SessionInfo>>> = Mutex::new(None);
+static CACHE_VERSION: AtomicU64 = AtomicU64::new(0);
+
+/// Invalidate the scan cache so the next scan re-reads all directories
+pub fn invalidate_cache() {
+    if let Ok(mut guard) = SCAN_CACHE.lock() {
+        *guard = None;
+        CACHE_VERSION.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// Lightweight digest for HTTP polling — just version + count, no session data
+pub fn get_session_digest() -> (u64, usize) {
+    let version = CACHE_VERSION.load(Ordering::Relaxed);
+    let count = SCAN_CACHE
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|v| v.len()))
+        .unwrap_or(0);
+    (version, count)
+}
 
 pub fn get_sessions_dir() -> Result<PathBuf, String> {
     let home = dirs::home_dir().ok_or("Cannot find home directory")?;
     Ok(home.join(".pi").join("agent").join("sessions"))
 }
 
+/// Returns all session directories: the default one plus any user-configured paths.
+pub fn get_all_session_dirs(config: &Config) -> Vec<PathBuf> {
+    let mut dirs = vec![];
+
+    // Default path always included
+    if let Ok(default_dir) = get_sessions_dir() {
+        dirs.push(default_dir);
+    }
+
+    // User-configured extra paths
+    for p in &config.session_paths {
+        let expanded = expand_tilde(p);
+        let path = PathBuf::from(&expanded);
+        if path.is_absolute() && !dirs.iter().any(|d| d == &path) {
+            dirs.push(path);
+        }
+    }
+
+    dirs
+}
+
+/// Expand ~ to home directory
+fn expand_tilde(path: &str) -> String {
+    if path.starts_with("~/") || path == "~" {
+        if let Some(home) = dirs::home_dir() {
+            return path.replacen('~', &home.to_string_lossy(), 1);
+        }
+    }
+    path.to_string()
+}
+
 pub async fn scan_sessions() -> Result<Vec<SessionInfo>, String> {
+    // Return cached list if available — file_watcher keeps it fresh
+    if let Ok(guard) = SCAN_CACHE.lock() {
+        if let Some(ref cached) = *guard {
+            return Ok(cached.clone());
+        }
+    }
+
+    // First call: full scan to populate cache
     let config = Config::load().unwrap_or_default();
-    scan_sessions_with_config(&config).await
+    let result = scan_sessions_with_config(&config).await?;
+
+    if let Ok(mut guard) = SCAN_CACHE.lock() {
+        *guard = Some(result.clone());
+        CACHE_VERSION.fetch_add(1, Ordering::Relaxed);
+    }
+
+    Ok(result)
 }
 
 pub async fn scan_sessions_with_config(config: &Config) -> Result<Vec<SessionInfo>, String> {
-    let sessions_dir = get_sessions_dir()?;
+    let all_dirs = get_all_session_dirs(config);
     let realtime_cutoff = Utc::now() - Duration::days(config.realtime_cutoff_days);
+    const MAX_RETRIES: usize = 1;
+    let mut attempt = 0;
 
-    if !sessions_dir.exists() {
-        return Ok(vec![]);
-    }
-
-    let mut conn_opt = Some(sqlite_cache::init_db_with_config(config)?);
-    let mut sessions: Vec<SessionInfo> = vec![];
-
-    let entries = fs::read_dir(&sessions_dir)
-        .map_err(|e| format!("Failed to read sessions directory: {}", e))?;
-
-    let process_entry = |conn: &rusqlite::Connection,
-                         path: PathBuf|
-     -> Result<Option<SessionInfo>, String> {
-        if path.extension().map(|ext| ext == "jsonl").unwrap_or(false) {
-            let path_str = path.to_string_lossy().to_string();
-            let metadata = fs::metadata(&path).map_err(|e| e.to_string())?;
-            let file_modified: DateTime<Utc> =
-                DateTime::from(metadata.modified().unwrap_or(std::time::SystemTime::now()));
-
-            if file_modified > realtime_cutoff {
-                if let Ok(info) = parse_session_info(&path) {
-                    sqlite_cache::upsert_session(conn, &info, file_modified)?;
-                    return Ok(Some(info));
-                }
-            } else {
-                let should_reparse = if let Some(cached_mtime) =
-                    sqlite_cache::get_cached_file_modified(conn, &path_str)?
-                {
-                    file_modified > cached_mtime || sqlite_cache::needs_reindexing(conn, &path_str)?
+    loop {
+        attempt += 1;
+        // Initialize database connection (may fail if corrupted)
+        let conn = match sqlite_cache::init_db_with_config(config) {
+            Ok(conn) => conn,
+            Err(e) => {
+                if is_corruption_error(&e) && attempt <= MAX_RETRIES {
+                    warn!("[Recovery] Database init failed (corruption suspected): {}. Attempting to recover...", e);
+                    // Attempt to delete corrupted DB and retry
+                    if let Ok(db_path) = sqlite_cache::get_db_path() {
+                        let _ = std::fs::remove_file(&db_path);
+                    }
+                    continue;
                 } else {
-                    true
+                    return Err(e);
+                }
+            }
+        };
+
+        // Perform the scan with error handling
+        let scan_result = (|| -> Result<Vec<SessionInfo>, String> {
+            let mut sessions: Vec<SessionInfo> = vec![];
+
+            for sessions_dir in &all_dirs {
+                if !sessions_dir.exists() {
+                    continue;
+                }
+
+                let entries = match fs::read_dir(sessions_dir) {
+                    Ok(e) => e,
+                    Err(e) => {
+                        log::warn!("Failed to read sessions directory {sessions_dir:?}: {e}");
+                        continue;
+                    }
                 };
 
-                if should_reparse {
-                    if let Ok(info) = parse_session_info(&path) {
-                        sqlite_cache::upsert_session(conn, &info, file_modified)?;
-                    }
-                }
-            }
-        }
-        Ok(None)
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if let Ok(files) = fs::read_dir(&path) {
-                for file in files.flatten() {
-                    let file_path = file.path();
-
-                    // Retry loop for corruption recovery
-                    let mut retries = 0;
-                    loop {
-                        if retries > 1 {
-                            eprintln!(
-                                "Failed to process session {} after retry",
-                                file_path.display()
-                            );
-                            break;
-                        }
-
-                        let conn = conn_opt.as_ref().ok_or("Database connection lost")?;
-                        match process_entry(conn, file_path.clone()) {
-                            Ok(Some(info)) => {
-                                sessions.push(info);
-                                break;
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        // Skip non-pi-session directories (gateway transcripts, subagent artifacts, etc.)
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            if name == "transcripts" || name == "subagent-artifacts" {
+                                continue;
                             }
-                            Ok(None) => break,
-                            Err(e)
-                                if e.contains("malformed")
-                                    || e.contains("disk image")
-                                    || e.contains("not a database") =>
-                            {
-                                eprintln!("[Scanner] Database corruption detected during scan: {}. Resetting...", e);
-                                drop(conn_opt.take()); // Drop connection
+                        }
+                        if let Ok(files) = fs::read_dir(&path) {
+                            for file in files.flatten() {
+                                let file_path = file.path();
+                                if file_path
+                                    .extension()
+                                    .map(|ext| ext == "jsonl")
+                                    .unwrap_or(false)
+                                {
+                                    let path_str = file_path.to_string_lossy().to_string();
 
-                                // Get DB path to delete it
-                                if let Ok(db_path) = sqlite_cache::get_db_path() {
-                                    fs::remove_file(&db_path).ok();
+                                    let metadata = fs::metadata(&file_path);
+                                    let file_modified: DateTime<Utc> = match metadata {
+                                        Ok(m) => DateTime::from(
+                                            m.modified().unwrap_or(std::time::SystemTime::now()),
+                                        ),
+                                        Err(_) => continue,
+                                    };
+
+                                    if file_modified > realtime_cutoff {
+                                        if let Ok((info, entries)) = parse_session_info(&file_path)
+                                        {
+                                            // Upsert message entries for FTS
+                                            if let Err(e) = sqlite_cache::upsert_message_entries(
+                                                &conn, &info.path, &entries,
+                                            ) {
+                                                log::warn!(
+                                                    "Failed to upsert message entries for {}: {}",
+                                                    info.path,
+                                                    e
+                                                );
+                                            }
+                                            sessions.push(info);
+                                            write_buffer::buffer_session_write(
+                                                sessions.last().unwrap(),
+                                                file_modified,
+                                            );
+                                        }
+                                    } else if let Some(cached_mtime) =
+                                        sqlite_cache::get_cached_file_modified(&conn, &path_str)?
+                                    {
+                                        if file_modified > cached_mtime {
+                                            if let Ok((info, entries)) =
+                                                parse_session_info(&file_path)
+                                            {
+                                                // Upsert message entries for FTS
+                                                if let Err(e) = sqlite_cache::upsert_message_entries(
+                                                    &conn, &info.path, &entries,
+                                                ) {
+                                                    log::warn!("Failed to upsert message entries for {}: {}", info.path, e);
+                                                }
+                                                write_buffer::buffer_session_write(
+                                                    &info,
+                                                    file_modified,
+                                                );
+                                            }
+                                        }
+                                    } else if let Ok((info, entries)) =
+                                        parse_session_info(&file_path)
+                                    {
+                                        // Upsert message entries for FTS
+                                        if let Err(e) = sqlite_cache::upsert_message_entries(
+                                            &conn, &info.path, &entries,
+                                        ) {
+                                            log::warn!(
+                                                "Failed to upsert message entries for {}: {}",
+                                                info.path,
+                                                e
+                                            );
+                                        }
+                                        write_buffer::buffer_session_write(&info, file_modified);
+                                    }
                                 }
-
-                                // Re-init
-                                conn_opt = Some(sqlite_cache::init_db_with_config(config)?);
-                                retries += 1;
-                            }
-                            Err(e) => {
-                                eprintln!(
-                                    "Error processing session {}: {}",
-                                    file_path.display(),
-                                    e
-                                );
-                                break;
                             }
                         }
                     }
                 }
             }
-        }
-    }
 
-    // Historical sessions loading with retry
-    let mut retries = 0;
-    loop {
-        if retries > 1 {
-            break;
-        }
-        let conn = conn_opt.as_ref().ok_or("Database connection lost")?;
+            let historical_sessions =
+                sqlite_cache::get_sessions_modified_before(&conn, realtime_cutoff)?;
 
-        match sqlite_cache::get_sessions_modified_before(conn, realtime_cutoff) {
-            Ok(historical_sessions) => {
-                for session in historical_sessions {
-                    if !sessions.iter().any(|s| s.path == session.path) {
-                        sessions.push(session);
-                    }
+            for session in historical_sessions {
+                if !sessions.iter().any(|s| s.path == session.path) {
+                    sessions.push(session);
                 }
-                break;
             }
-            Err(e)
-                if e.contains("malformed")
-                    || e.contains("disk image")
-                    || e.contains("not a database") =>
-            {
-                eprintln!(
-                    "[Scanner] Database corruption loading history: {}. Resetting...",
-                    e
-                );
-                drop(conn_opt.take());
-                if let Ok(db_path) = sqlite_cache::get_db_path() {
-                    fs::remove_file(&db_path).ok();
-                }
-                conn_opt = Some(sqlite_cache::init_db_with_config(config)?);
-                retries += 1;
-            }
+
+            sessions.sort_by(|a, b| b.modified.cmp(&a.modified));
+
+            let realtime_count = sessions
+                .iter()
+                .filter(|s| s.modified > realtime_cutoff)
+                .count();
+            let historical_count = sessions.len() - realtime_count;
+
+            trace!(
+                "Scan complete: {} realtime (≤{}d), {} historical (>{}d), total {}",
+                realtime_count,
+                config.realtime_cutoff_days,
+                historical_count,
+                config.realtime_cutoff_days,
+                sessions.len()
+            );
+
+            Ok(sessions)
+        })();
+
+        match scan_result {
+            Ok(sessions) => break Ok(sessions),
             Err(e) => {
-                eprintln!("Error loading historical sessions: {}", e);
-                break;
+                if is_corruption_error(&e) && attempt <= MAX_RETRIES {
+                    warn!("[Recovery] Database corruption detected during scan: {}. Dropping connection and retrying...", e);
+                    // Connection will be dropped at end of loop iteration; delete DB and retry
+                    if let Ok(db_path) = sqlite_cache::get_db_path() {
+                        let _ = std::fs::remove_file(&db_path);
+                    }
+                    continue;
+                } else {
+                    return Err(e);
+                }
             }
         }
     }
-
-    // Stable sort: by modified descending, then by path ascending to guarantee deterministic order
-    sessions.sort_by(|a, b| b.modified.cmp(&a.modified).then(a.path.cmp(&b.path)));
-
-    let realtime_count = sessions
-        .iter()
-        .filter(|s| s.modified > realtime_cutoff)
-        .count();
-    let historical_count = sessions.len() - realtime_count;
-
-    eprintln!(
-        "Scan complete: {} realtime (≤{}d), {} historical (>{}d), total {}",
-        realtime_count,
-        config.realtime_cutoff_days,
-        historical_count,
-        config.realtime_cutoff_days,
-        sessions.len()
-    );
-
-    Ok(sessions)
 }
 
-/// 解析会话信息
+/// 解析会话信息并提取消息条目
 /// 优化：使用 BufReader 流式读取，减少大文件内存占用
-pub fn parse_session_info(path: &Path) -> Result<SessionInfo, String> {
-    let file = fs::File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
+/// 返回：(SessionInfo, Vec<SessionEntry>) - 会话信息和消息条目列表
+pub fn parse_session_info(path: &Path) -> Result<(SessionInfo, Vec<SessionEntry>), String> {
+    let file = fs::File::open(path).map_err(|e| format!("Failed to open file: {e}"))?;
     let reader = BufReader::new(file);
     let mut lines = reader.lines();
 
@@ -193,10 +285,10 @@ pub fn parse_session_info(path: &Path) -> Result<SessionInfo, String> {
     let header_line = lines
         .next()
         .ok_or("Empty session file")?
-        .map_err(|e| format!("Failed to read header: {}", e))?;
+        .map_err(|e| format!("Failed to read header: {e}"))?;
 
     let header: Value =
-        serde_json::from_str(&header_line).map_err(|e| format!("Failed to parse header: {}", e))?;
+        serde_json::from_str(&header_line).map_err(|e| format!("Failed to parse header: {e}"))?;
 
     if header["type"] != "session" {
         return Err("Invalid session header".to_string());
@@ -207,11 +299,11 @@ pub fn parse_session_info(path: &Path) -> Result<SessionInfo, String> {
     let timestamp_str = header["timestamp"].as_str().unwrap_or("");
     let created = parse_timestamp(timestamp_str)?;
 
-    let metadata = fs::metadata(path).map_err(|e| format!("Failed to get metadata: {}", e))?;
+    let metadata = fs::metadata(path).map_err(|e| format!("Failed to get metadata: {e}"))?;
     let modified = DateTime::from(
         metadata
             .modified()
-            .map_err(|e| format!("Failed to get modified time: {}", e))?,
+            .map_err(|e| format!("Failed to get modified time: {e}"))?,
     );
 
     let mut message_count = 0;
@@ -222,6 +314,7 @@ pub fn parse_session_info(path: &Path) -> Result<SessionInfo, String> {
     let mut name: Option<String> = None;
     let mut last_message = String::new();
     let mut last_message_role = String::new();
+    let mut entries = Vec::new();
 
     // 流式读取剩余行，减少内存占用
     for line_result in lines {
@@ -249,17 +342,39 @@ pub fn parse_session_info(path: &Path) -> Result<SessionInfo, String> {
                     let text = extract_message_text(&entry);
                     if !text.is_empty() {
                         all_messages.push(text.clone());
-                        if role == "user" {
-                            user_messages.push(text.clone());
-                            if first_message.is_empty() {
-                                first_message = text.chars().take(100).collect();
-                            }
-                        } else if role == "assistant" {
-                            assistant_messages.push(text.clone());
+                        if first_message.is_empty() && role == "user" {
+                            first_message = text.chars().take(100).collect();
                         }
                         // 更新最后一条消息
                         last_message = text.chars().take(150).collect();
                         last_message_role = role.to_string();
+
+                        // 收集用户和助手的消息文本
+                        if role == "user" {
+                            user_messages.push(text.clone());
+                        } else if role == "assistant" {
+                            assistant_messages.push(text.clone());
+                        }
+
+                        // 构建 SessionEntry 用于 message_entries 表
+                        let entry_id = entry["id"].as_str().unwrap_or("").to_string();
+                        let timestamp_str = entry["timestamp"].as_str().unwrap_or("");
+                        let timestamp = parse_timestamp(timestamp_str)?;
+
+                        let session_entry = SessionEntry {
+                            entry_type: "message".to_string(),
+                            id: entry_id,
+                            parent_id: None,
+                            timestamp,
+                            message: Some(Message {
+                                role: role.to_string(),
+                                content: vec![Content {
+                                    content_type: "text".to_string(),
+                                    text: Some(text),
+                                }],
+                            }),
+                        };
+                        entries.push(session_entry);
                     }
                 }
             }
@@ -270,21 +385,24 @@ pub fn parse_session_info(path: &Path) -> Result<SessionInfo, String> {
     let user_messages_text = user_messages.join("\n");
     let assistant_messages_text = assistant_messages.join("\n");
 
-    Ok(SessionInfo {
-        path: path.to_string_lossy().to_string(),
-        id,
-        cwd,
-        name,
-        created,
-        modified,
-        message_count,
-        first_message,
-        all_messages_text,
-        user_messages_text,
-        assistant_messages_text,
-        last_message,
-        last_message_role,
-    })
+    Ok((
+        SessionInfo {
+            path: path.to_string_lossy().to_string(),
+            id,
+            cwd,
+            name,
+            created,
+            modified,
+            message_count,
+            first_message,
+            all_messages_text,
+            user_messages_text,
+            assistant_messages_text,
+            last_message,
+            last_message_role,
+        },
+        entries,
+    ))
 }
 
 fn extract_message_text(entry: &Value) -> String {
@@ -307,5 +425,82 @@ fn extract_message_text(entry: &Value) -> String {
 fn parse_timestamp(s: &str) -> Result<DateTime<Utc>, String> {
     DateTime::parse_from_rfc3339(s)
         .map(|dt| dt.with_timezone(&Utc))
-        .map_err(|e| format!("Failed to parse timestamp: {}", e))
+        .map_err(|e| format!("Failed to parse timestamp: {e}"))
+}
+
+/// Incremental update: re-parse changed files, update cache, return diff for frontend merge.
+pub async fn rescan_changed_files(changed_paths: Vec<String>) -> Result<SessionsDiff, String> {
+    let mut sessions = if let Ok(guard) = SCAN_CACHE.lock() {
+        guard.clone().unwrap_or_default()
+    } else {
+        vec![]
+    };
+
+    if sessions.is_empty() {
+        sessions = scan_sessions().await?;
+    }
+
+    let mut diff = SessionsDiff {
+        updated: vec![],
+        removed: vec![],
+    };
+
+    let config = Config::load().unwrap_or_default();
+    let conn = sqlite_cache::init_db_with_config(&config)?;
+
+    for path_str in &changed_paths {
+        let path = PathBuf::from(path_str);
+
+        if !path.exists() {
+            let before = sessions.len();
+            sessions.retain(|s| s.path != *path_str);
+            if sessions.len() != before {
+                diff.removed.push(path_str.clone());
+                log::info!("Session removed (file deleted): {path_str}");
+            }
+            continue;
+        }
+
+        match parse_session_info(&path) {
+            Ok((info, entries)) => {
+                // Upsert message entries for FTS
+                if let Err(e) = sqlite_cache::upsert_message_entries(&conn, &info.path, &entries) {
+                    log::warn!("Failed to upsert message entries for {}: {}", info.path, e);
+                }
+                if let Ok(m) = fs::metadata(&path) {
+                    if let Ok(mt) = m.modified() {
+                        let file_modified: DateTime<Utc> = DateTime::from(mt);
+                        write_buffer::buffer_session_write(&info, file_modified);
+                    }
+                }
+
+                diff.updated.push(info.clone());
+
+                if let Some(existing) = sessions.iter_mut().find(|s| s.path == info.path) {
+                    *existing = info;
+                } else {
+                    sessions.push(info);
+                }
+            }
+            Err(e) => {
+                log::warn!("Failed to re-parse {path_str}: {e}");
+            }
+        }
+    }
+
+    if !diff.updated.is_empty() || !diff.removed.is_empty() {
+        sessions.sort_by(|a, b| b.modified.cmp(&a.modified));
+        if let Ok(mut guard) = SCAN_CACHE.lock() {
+            *guard = Some(sessions);
+            CACHE_VERSION.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    log::info!(
+        "Incremental rescan: {} updated, {} removed",
+        diff.updated.len(),
+        diff.removed.len()
+    );
+
+    Ok(diff)
 }

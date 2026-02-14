@@ -176,9 +176,11 @@ export function StatCardSkeleton() {
 
 export function DashboardStatsSkeleton() {
   return (
-    <div className="grid grid-cols-5 gap-3 mb-4">
+    <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
       {Array.from({ length: 5 }).map((_, index) => (
-        <StatCardSkeleton key={index} />
+        <div key={index} className={index === 4 ? 'col-span-2 md:col-span-1' : ''}>
+          <StatCardSkeleton />
+        </div>
       ))}
     </div>
   )
@@ -214,7 +216,7 @@ export function RecentSessionsSkeleton({ count = 5 }: { count?: number }) {
         </div>
         <div className="space-y-1.5">
           {Array.from({ length: count }).map((_, index) => (
-            <div key={index} className="flex items-center gap-2 p-2 bg-[#1a1b26]/60 rounded-lg border border-white/5">
+            <div key={index} className="flex items-center gap-2 p-2 bg-background/60 rounded-lg border border-foreground/5">
               <Skeleton className="h-5 w-5 rounded flex-shrink-0" />
               <div className="flex-1 min-w-0">
                 <Skeleton className="h-3 w-full mb-1" style={{ maxWidth: '70%' }} />
@@ -305,31 +307,21 @@ export function DashboardSkeleton() {
       <DashboardStatsSkeleton />
 
       {/* Main Grid */}
-      <div className="grid grid-cols-12 gap-3">
-        {/* Left Column - 8 cols */}
-        <div className="col-span-8 space-y-3">
-          {/* Token Trend Chart */}
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+        {/* Left Column */}
+        <div className="md:col-span-8 space-y-3">
           <ChartCardSkeleton height={120} />
-
-          {/* Message Distribution + Heatmap */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <ChartCardSkeleton height={140} />
             <HeatmapSkeleton />
           </div>
-
-          {/* Recent Sessions */}
           <RecentSessionsSkeleton count={6} />
         </div>
 
-        {/* Right Column - 4 cols */}
-        <div className="col-span-4 space-y-3">
-          {/* Top Models */}
+        {/* Right Column */}
+        <div className="md:col-span-4 space-y-3">
           <ListChartSkeleton items={5} />
-
-          {/* Projects */}
           <ListChartSkeleton items={5} />
-
-          {/* Time Distribution */}
           <ChartCardSkeleton height={100} />
         </div>
       </div>

@@ -6,7 +6,7 @@ use std::fs;
 
 /// Create a mock session file in the test directory
 fn create_mock_session(dir: &str, filename: &str, content: &str) -> String {
-    let file_path = format!("{}/{}", dir, filename);
+    let file_path = format!("{dir}/{filename}");
     fs::write(&file_path, content).expect("Failed to write mock session file");
     file_path
 }
@@ -50,7 +50,7 @@ fn test_search_integration() {
             message_count: 1,
             first_message: "How to implement search in Rust?".to_string(),
             all_messages_text: "How to implement search in Rust?".to_string(),
-            user_messages_text: "How to implement search in Rust?".to_string(),
+            user_messages_text: String::new(),
             assistant_messages_text: String::new(),
             last_message: "How to implement search in Rust?".to_string(),
             last_message_role: "user".to_string(),
@@ -69,7 +69,7 @@ fn test_search_integration() {
             message_count: 1,
             first_message: "I want to learn React".to_string(),
             all_messages_text: "I want to learn React".to_string(),
-            user_messages_text: "I want to learn React".to_string(),
+            user_messages_text: String::new(),
             assistant_messages_text: String::new(),
             last_message: "I want to learn React".to_string(),
             last_message_role: "user".to_string(),
@@ -89,7 +89,7 @@ fn test_search_integration() {
             first_message: "Here is how you implement search in Rust...".to_string(),
             all_messages_text: "Here is how you implement search in Rust...".to_string(),
             user_messages_text: String::new(),
-            assistant_messages_text: "Here is how you implement search in Rust...".to_string(),
+            assistant_messages_text: String::new(),
             last_message: "Here is how you implement search in Rust...".to_string(),
             last_message_role: "user".to_string(),
         },
@@ -242,7 +242,7 @@ fn test_search_results_mapping() {
         message_count: 1,
         first_message: "Test search functionality".to_string(),
         all_messages_text: "Test search functionality".to_string(),
-        user_messages_text: "Test search functionality".to_string(),
+        user_messages_text: String::new(),
         assistant_messages_text: String::new(),
         last_message: "Test search functionality".to_string(),
         last_message_role: "user".to_string(),

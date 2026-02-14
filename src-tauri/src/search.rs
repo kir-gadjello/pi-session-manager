@@ -166,16 +166,16 @@ fn find_matches(
     matches
 }
 
-pub struct MessageEntry {
-    pub id: String,
-    pub role: String,
-    pub content: String,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
+struct MessageEntry {
+    id: String,
+    role: String,
+    content: String,
+    timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 /// 从 BufReader 解析会话条目
 /// 优化：支持流式读取，避免大文件内存问题
-pub fn parse_session_entries_from_reader<R: std::io::BufRead>(
+fn parse_session_entries_from_reader<R: std::io::BufRead>(
     reader: R,
     role_filter: RoleFilter,
     include_tools: bool,
@@ -252,7 +252,7 @@ pub fn parse_session_entries_from_reader<R: std::io::BufRead>(
 
 fn get_filtered_session_content(path: &str, role_filter: RoleFilter) -> Result<String, String> {
     let content =
-        std::fs::read_to_string(path).map_err(|e| format!("Failed to read session file: {}", e))?;
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read session file: {e}"))?;
 
     let mut full_text = String::new();
 
@@ -281,7 +281,7 @@ fn get_filtered_session_content(path: &str, role_filter: RoleFilter) -> Result<S
                             if let Some(text) = item.get("text") {
                                 if let Some(s) = text.as_str() {
                                     full_text.push_str(s);
-                                    full_text.push_str("\n");
+                                    full_text.push('\n');
                                 }
                             }
                         }
@@ -304,7 +304,7 @@ fn role_to_string(role_filter: RoleFilter) -> String {
 
 fn get_full_session_content(path: &str) -> Result<String, String> {
     let content =
-        std::fs::read_to_string(path).map_err(|e| format!("Failed to read session file: {}", e))?;
+        std::fs::read_to_string(path).map_err(|e| format!("Failed to read session file: {e}"))?;
 
     let mut full_text = String::new();
 
@@ -323,7 +323,7 @@ fn get_full_session_content(path: &str) -> Result<String, String> {
                         if let Some(text) = item.get("text") {
                             if let Some(s) = text.as_str() {
                                 full_text.push_str(s);
-                                full_text.push_str("\n");
+                                full_text.push('\n');
                             }
                         }
 
@@ -331,7 +331,7 @@ fn get_full_session_content(path: &str) -> Result<String, String> {
                         if let Some(thinking) = item.get("thinking") {
                             if let Some(s) = thinking.as_str() {
                                 full_text.push_str(s);
-                                full_text.push_str("\n");
+                                full_text.push('\n');
                             }
                         }
                     }

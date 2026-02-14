@@ -22,6 +22,7 @@ export const dashboard = {
     sessions: 'Sessions',
     sessionsByProject: 'Sessions by Project',
     projects: 'projects',
+    clickToView: 'Click to view {{project}}',
   },
   topModels: {
     title: 'Top Models',
@@ -64,6 +65,7 @@ export const dashboard = {
     sessions: 'Sessions',
     messages: 'Messages',
     change: 'Change',
+    vsLastWeek: 'vs last week',
   },
   productivityMetrics: {
     title: 'Productivity Metrics',

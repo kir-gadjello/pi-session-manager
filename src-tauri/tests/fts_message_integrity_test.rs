@@ -130,7 +130,7 @@ fn test_fts_migration_and_integrity() {
     let file_modified = Utc::now();
     for path in [&sess1_path, &sess2_path] {
         // Parse session info using crate's scanner
-        let session = scanner::parse_session_info(path).unwrap();
+        let (session, _entries) = scanner::parse_session_info(path).unwrap();
 
         // Insert session row
         conn.execute(
@@ -402,7 +402,7 @@ fn test_backfill_when_message_entries_empty() {
     // Insert only sessions (skip message_entries) - simulate old DB with sessions but no per-message data
     let file_modified = Utc::now();
     for path in [&sess1_path, &sess2_path] {
-        let session = scanner::parse_session_info(path).unwrap();
+        let (session, _entries) = scanner::parse_session_info(path).unwrap();
         conn.execute(
             "INSERT OR REPLACE INTO sessions (id, path, cwd, name, created, modified, file_modified, message_count, first_message, all_messages_text, user_messages_text, assistant_messages_text, last_message, last_message_role, cached_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             params![

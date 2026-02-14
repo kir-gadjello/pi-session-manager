@@ -165,6 +165,7 @@ export const components = {
     projectsChart: {
       title: 'Sessions by Project',
       projects: 'projects',
+      clickToView: 'Click to view {{project}}',
     },
     tokenStats: {
       title: 'Token Usage',
@@ -192,5 +193,35 @@ export const components = {
       totalTokens: 'Total Tokens',
       totalCost: 'Total Cost',
     },
+  },
+  subagent: {
+    thinking: 'Thinking',
+    tools: 'Tools',
+    close: 'Close (Esc)',
+    showThinking: 'Show thinking (⌘T)',
+    hideThinking: 'Hide thinking (⌘T)',
+    expandTools: 'Expand tools (⌘O)',
+    collapseTools: 'Collapse tools (⌘O)',
+    clickToView: 'Click to view subagent session',
+  },
+  sessionFlow: {
+    zoomIn: 'Zoom In',
+    zoomOut: 'Zoom Out',
+    fitView: 'Fit View',
+    focusActive: 'Focus Active',
+  },
+  terminalPanel: {
+    newTerminal: 'New terminal',
+    selectShell: 'Select shell',
+    hidePanel: 'Hide panel',
+  },
+  tokenTrend: {
+    noData: 'No token usage data available',
+  },
+  tagManager: {
+    addChild: 'Add child label',
+  },
+  piConfig: {
+    view: 'View',
   },
 } as const

@@ -1,8 +1,11 @@
 import { useState, useCallback } from 'react'
-import { invoke } from '@tauri-apps/api/core'
 import i18n from '../i18n'
+import { loadAppSettings } from '../utils/settingsApi'
+import { type TerminalType, getPlatformDefaults } from '../components/settings/types'
 
-export type TerminalType = 'iterm2' | 'terminal' | 'vscode' | 'custom'
+export type { TerminalType }
+
+const platformDefaults = getPlatformDefaults()
 
 export interface UseAppSettingsReturn {
   terminal: TerminalType
@@ -12,27 +15,22 @@ export interface UseAppSettingsReturn {
 }
 
 export function useAppSettings(): UseAppSettingsReturn {
-  const [terminal, setTerminal] = useState<TerminalType>('iterm2')
+  const [terminal, setTerminal] = useState<TerminalType>(platformDefaults.defaultTerminal)
   const [piPath, setPiPath] = useState<string>('pi')
   const [customCommand, setCustomCommand] = useState<string>('')
 
   const loadSettings = useCallback(async () => {
     try {
-      const settings = await invoke('load_app_settings') as any
+      const settings = await loadAppSettings()
       if (settings?.terminal) {
-        setTerminal(settings.terminal.default_terminal || 'iterm2')
-        setPiPath(settings.terminal.pi_command_path || 'pi')
-        setCustomCommand(settings.terminal.custom_terminal_command || '')
+        setTerminal(settings.terminal.defaultTerminal || platformDefaults.defaultTerminal)
+        setPiPath(settings.terminal.piCommandPath || 'pi')
+        setCustomCommand(settings.terminal.customTerminalCommand || '')
       }
-
-      const frontendSettings = localStorage.getItem('pi-session-manager-settings')
-      if (frontendSettings) {
-        const parsed = JSON.parse(frontendSettings)
-        if (parsed?.language?.locale) {
-          i18n.changeLanguage(parsed.language.locale)
-        }
+      if (settings?.language?.locale) {
+        i18n.changeLanguage(settings.language.locale)
       }
-    } catch (error) {
+    } catch {
       // Silently fail during initialization
     }
   }, [])

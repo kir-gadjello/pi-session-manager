@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, isTauri } from '../transport'
 import { Terminal, Loader2 } from 'lucide-react'
 import type { SessionInfo } from '../types'
+import type { TerminalType } from './settings/types'
+import { getPlatformDefaults } from './settings/types'
 
 interface OpenInTerminalButtonProps {
   session: SessionInfo
-  terminal?: 'iterm2' | 'terminal' | 'vscode' | 'custom'
+  terminal?: TerminalType
   piPath?: string
   customCommand?: string
   size?: 'sm' | 'md' | 'lg'
@@ -16,12 +18,13 @@ interface OpenInTerminalButtonProps {
   showLabel?: boolean
   onSuccess?: () => void
   onError?: (error: string) => void
+  onWebResume?: () => void
   children?: React.ReactNode
 }
 
 export default function OpenInTerminalButton({
   session,
-  terminal = 'iterm2',
+  terminal = getPlatformDefaults().defaultTerminal,
   piPath,
   customCommand,
   size = 'sm',
@@ -31,6 +34,7 @@ export default function OpenInTerminalButton({
   showLabel = false,
   onSuccess,
   onError,
+  onWebResume,
   children,
 }: OpenInTerminalButtonProps) {
   const { t } = useTranslation()
@@ -56,6 +60,11 @@ export default function OpenInTerminalButton({
 
   const handleOpenInTerminal = async (e?: React.MouseEvent) => {
     e?.stopPropagation()
+
+    if (!isTauri()) {
+      onWebResume?.()
+      return
+    }
 
     if (loading) return
 

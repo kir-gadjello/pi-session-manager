@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next'
 import { escapeHtml, getLanguageFromPath } from '../utils/markdown'
 import { shortenPath, formatDate } from '../utils/format'
 import CodeBlock from './CodeBlock'
-import { Copy, Check } from 'lucide-react'
 
 interface ReadExecutionProps {
   filePath: string
@@ -26,7 +25,6 @@ export default function ReadExecution({
 }: ReadExecutionProps) {
   const { t } = useTranslation()
   const [localExpanded, setLocalExpanded] = useState(false)
-  const [outputCopied, setOutputCopied] = useState(false)
 
   useEffect(() => {
     setLocalExpanded(expanded)
@@ -45,17 +43,6 @@ export default function ReadExecution({
   const lines = output ? output.split('\n') : []
   const previewLines = lines.slice(0, 20)
   const remaining = lines.length - 20
-
-  const handleCopyOutput = async () => {
-    if (!output) return
-    try {
-      await navigator.clipboard.writeText(output)
-      setOutputCopied(true)
-      setTimeout(() => setOutputCopied(false), 2000)
-    } catch (err) {
-      console.error('Failed to copy read output:', err)
-    }
-  }
 
   return (
     <div className="tool-execution success">
@@ -84,58 +71,38 @@ export default function ReadExecution({
       )}
 
       {output && (
-        <div className="tool-output-section">
-          <div className="tool-output-header">
-            <span className="tool-output-label">Output</span>
-            <button
-              onClick={handleCopyOutput}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleCopyOutput();
-                }
-              }}
-              className="tool-copy-button"
-              aria-label={outputCopied ? 'Copied output' : 'Copy output'}
-              title={outputCopied ? 'Copied!' : 'Copy output'}
-            >
-              {outputCopied ? (
-                <Check className="w-4 h-4" />
-              ) : (
-                <Copy className="w-4 h-4" />
-              )}
-            </button>
-          </div>
-          <div className="tool-output">
-            {remaining > 0 && !localExpanded ? (
-              <>
-                <CodeBlock code={previewLines.join('\n')} language={lang} showLineNumbers={false} />
-                <div
-                  className="expand-hint"
-                  onClick={() => setLocalExpanded(true)}
-                  style={{ cursor: 'pointer' }}
-                >
-                  ... {t('components.expandableOutput.moreLines', { count: remaining })}
-                </div>
-              </>
-            ) : (
-              <CodeBlock code={output} language={lang} showLineNumbers={false} />
-            )}
-            {remaining > 0 && localExpanded && (
-              <div
-                className="expand-hint"
-                onClick={() => setLocalExpanded(false)}
-                style={{ cursor: 'pointer' }}
-              >
-                Show less
+        <div
+          className="tool-output-wrapper"
+          onClick={remaining > 0 ? () => setLocalExpanded(!localExpanded) : undefined}
+          style={{ cursor: remaining > 0 ? 'pointer' : 'default' }}
+        >
+          {remaining > 0 ? (
+            <>
+              <div className="tool-output-header">
+                <span className="tool-output-label">
+                  {localExpanded ? '▾ Content' : `▸ Content (${remaining} more lines)`}
+                </span>
               </div>
-            )}
-          </div>
+              {localExpanded ? (
+                <div className="tool-output" onClick={(e) => e.stopPropagation()}>
+                  <CodeBlock code={output} language={lang} showLineNumbers={false} />
+                </div>
+              ) : (
+                <div className="tool-output" onClick={(e) => e.stopPropagation()}>
+                  <CodeBlock code={previewLines.join('\n')} language={lang} showLineNumbers={false} />
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="tool-output" style={{ paddingTop: '8px' }} onClick={(e) => e.stopPropagation()}>
+              <CodeBlock code={output} language={lang} showLineNumbers={false} />
+            </div>
+          )}
         </div>
       )}
 
       {!output && !images.length && (
-        <div className="tool-output" style={{ color: '#6a6f85', fontStyle: 'italic' }}>
+        <div className="tool-output" style={{ color: 'var(--muted)', fontStyle: 'italic' }}>
           No output
         </div>
       )}

@@ -12,21 +12,21 @@ export default function LanguageSettings({ settings, onUpdate }: LanguageSetting
   const languages = [
     { code: 'zh-CN', name: '简体中文', flag: '🇨🇳' },
     { code: 'en-US', name: 'English', flag: '🇺🇸' },
+    { code: 'ja-JP', name: '日本語', flag: '🇯🇵' },
+    { code: 'fr-FR', name: 'Français', flag: '🇫🇷' },
+    { code: 'de-DE', name: 'Deutsch', flag: '🇩🇪' },
+    { code: 'es-ES', name: 'Español', flag: '🇪🇸' },
   ]
 
   const handleLanguageChange = (langCode: string) => {
-    // 更新 settings
     onUpdate('language', 'locale', langCode)
-    // 切换 i18n 语言
     i18n.changeLanguage(langCode)
-    // 保存到 localStorage
-    localStorage.setItem('app-language', langCode)
   }
 
   return (
     <div className="space-y-6">
       <div className="space-y-3">
-        <label className="text-sm font-medium text-white">
+        <label className="text-sm font-medium text-foreground">
           {t('settings.language.select', '选择语言')}
         </label>
         <div className="space-y-2">
@@ -35,8 +35,8 @@ export default function LanguageSettings({ settings, onUpdate }: LanguageSetting
               key={lang.code}
               className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all ${
                 settings.language.locale === lang.code
-                  ? 'border-[#569cd6] bg-[#569cd6]/10'
-                  : 'border-[#2c2d3b] hover:border-[#3a3b4f]'
+                  ? 'border-info bg-info/10'
+                  : 'border-border hover:border-border-hover'
               }`}
             >
               <input
@@ -48,9 +48,9 @@ export default function LanguageSettings({ settings, onUpdate }: LanguageSetting
                 className="sr-only"
               />
               <span className="text-xl">{lang.flag}</span>
-              <span className="text-sm font-medium text-white">{lang.name}</span>
+              <span className="text-sm font-medium text-foreground">{lang.name}</span>
               {settings.language.locale === lang.code && (
-                <Check className="h-4 w-4 text-[#569cd6] ml-auto" />
+                <Check className="h-4 w-4 text-info ml-auto" />
               )}
             </label>
           ))}

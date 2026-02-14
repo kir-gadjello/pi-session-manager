@@ -29,7 +29,7 @@ pub fn parse_session_details(jsonl_content: &str) -> SessionDetails {
                         if let Some(model) = message["model"].as_str() {
                             let provider = message["provider"].as_str().unwrap_or("unknown");
                             let model_name = if provider != "unknown" {
-                                format!("{}/{}", provider, model)
+                                format!("{provider}/{model}")
                             } else {
                                 model.to_string()
                             };
@@ -127,5 +127,3 @@ impl SessionDetails {
         self.user_messages + self.assistant_messages + self.tool_results + self.custom_messages
     }
 }
-
-

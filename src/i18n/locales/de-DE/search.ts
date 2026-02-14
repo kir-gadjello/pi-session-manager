@@ -1,0 +1,32 @@
+export const search = {
+  panel: {
+    placeholder: 'Sitzungen durchsuchen...',
+    searching: 'Suche läuft...',
+    results: '{count} Ergebnis{count, plural, =1 {} other{se}}',
+  },
+  clear: 'Löschen',
+  clearAll: 'Suche löschen (Esc)',
+  placeholder: 'In Sitzung suchen...',
+  noResults: 'Keine Ergebnisse',
+  previous: 'Vorheriges Ergebnis (Shift+Enter)',
+  next: 'Nächstes Ergebnis (Enter)',
+  close: 'Suche schließen (Esc)',
+  searching: 'Suche läuft...',
+  results: '{count} Ergebnisse',
+  fullText: {
+    placeholder: 'Alle Sitzungen durchsuchen...',
+    resultsFound: '{{count}} Treffer gefunden',
+    filters: 'Filter',
+    role: {
+      all: 'Alle',
+      user: 'Benutzer',
+      assistant: 'KI',
+    },
+    globPlaceholder: 'Pfad-Glob (z.B. **/src/**)',
+    startTyping: 'Tippen Sie, um die Volltextsuche zu starten',
+    sortScore: 'Relevanz',
+    sortNewest: 'Neueste',
+    sortOldest: 'Älteste',
+    sortTitle: 'Sortieren nach',
+  },
+} as const

@@ -1,6 +1,9 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.tsx'
+import AuthGate from './components/AuthGate'
+import { TransportProvider } from './contexts/TransportContext'
+import { SettingsProvider } from './contexts/SettingsContext'
 import './i18n'
 import './index.css'
 
@@ -54,6 +57,12 @@ window.copyCode = async (button: HTMLButtonElement) => {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <App />
+    <AuthGate>
+      <TransportProvider>
+        <SettingsProvider>
+          <App />
+        </SettingsProvider>
+      </TransportProvider>
+    </AuthGate>
   </React.StrictMode>,
 )

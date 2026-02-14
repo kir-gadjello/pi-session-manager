@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke } from '../transport'
 import { useTranslation } from 'react-i18next'
-import type { SessionInfo } from '../types'
+import type { SessionInfo, SessionsDiff } from '../types'
 import { useDemoMode } from './useDemoMode'
 
 export interface UseSessionsReturn {
@@ -9,7 +9,8 @@ export interface UseSessionsReturn {
   loading: boolean
   selectedSession: SessionInfo | null
   setSelectedSession: (session: SessionInfo | null) => void
-  loadSessions: (useFullScan?: boolean) => Promise<void>
+  loadSessions: () => Promise<void>
+  patchSessions: (diff: SessionsDiff) => void
   handleDeleteSession: (session: SessionInfo) => Promise<void>
   handleRenameSession: (session: SessionInfo, newName: string) => Promise<void>
 }
@@ -21,87 +22,113 @@ export function useSessions(): UseSessionsReturn {
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const selectedSessionRef = useRef<SessionInfo | null>(null)
-  const sessionsRef = useRef<SessionInfo[]>([])
 
-  // Keep refs in sync with latest state
   useEffect(() => {
     selectedSessionRef.current = selectedSession
   }, [selectedSession])
 
-  useEffect(() => {
-    sessionsRef.current = sessions
-  }, [sessions])
-
-  const loadSessions = useCallback(async (useFullScan: boolean = false) => {
+  const loadSessions = useCallback(async () => {
     try {
       let loadedSessions: SessionInfo[] = []
       if (isDemoMode) {
         loadedSessions = getDemoSessions()
       } else {
-        if (useFullScan) {
-          loadedSessions = await invoke<SessionInfo[]>('scan_sessions')
-        } else {
-          loadedSessions = await invoke<SessionInfo[]>('get_cached_sessions')
-        }
+        loadedSessions = await invoke<SessionInfo[]>('scan_sessions')
       }
-      // Compare with current sessions to avoid unnecessary re-renders and scroll resets
-      const currentSessions = sessionsRef.current
-      const areEqual = loadedSessions.length === currentSessions.length &&
-        loadedSessions.every((s, i) => {
-          const old = currentSessions[i]
-          return old.path === s.path &&
-                 old.modified === s.modified &&
-                 old.name === s.name &&
-                 old.message_count === s.message_count &&
-                 old.first_message === s.first_message &&
-                 old.last_message === s.last_message &&
-                 old.last_message_role === s.last_message_role &&
-                 old.created === s.created &&
-                 old.cwd === s.cwd
-        })
+      setSessions(loadedSessions)
 
-      if (!areEqual) {
-        setSessions(loadedSessions)
+      const currentSelection = selectedSessionRef.current
+      if (currentSelection) {
+        const matchedByPath = loadedSessions.find(s => s.path === currentSelection.path)
+        const matchedById = loadedSessions.find(s => s.id === currentSelection.id)
+        const matched = matchedByPath || matchedById
 
-        // Update selected session if needed
-        const currentSelection = selectedSessionRef.current
-        if (currentSelection) {
-          const matchedByPath = loadedSessions.find(s => s.path === currentSelection.path)
-          const matchedById = loadedSessions.find(s => s.id === currentSelection.id)
-          const matched = matchedByPath || matchedById
+        if (matched) {
+          const pathChanged = matched.path !== currentSelection.path
+          const nameChanged = matched.name !== currentSelection.name
+          const hasChanges = pathChanged || nameChanged ||
+            matched.message_count !== currentSelection.message_count ||
+            matched.modified !== currentSelection.modified
 
-          if (matched) {
-            const pathChanged = matched.path !== currentSelection.path
-            const nameChanged = matched.name !== currentSelection.name
-            const hasChanges = pathChanged || nameChanged ||
-              matched.message_count !== currentSelection.message_count ||
-              matched.modified !== currentSelection.modified
-
-            if (hasChanges) {
-              // Replace the selected session with the fresh object to ensure UI updates
-              setSelectedSession(matched)
-            }
+          if (!hasChanges) {
+            // No changes detected, keeping current selection stable
+          } else if (pathChanged || nameChanged) {
+            setSelectedSession(matched)
           } else {
-            try {
-              if (isDemoMode) {
-                setSelectedSession(currentSelection)
-              } else {
-                await invoke('read_session_file', { path: currentSelection.path })
-              }
-            } catch (error) {
-              console.warn('[useSessions] Selected session file not readable, clearing selection:', error)
-              setSelectedSession(null)
+            // Session metadata changed, updating silently
+            setSelectedSession(prev => {
+              if (!prev) return matched
+              return { ...prev, ...matched }
+            })
+          }
+        } else {
+          try {
+            if (isDemoMode) {
+              // Demo mode doesn't need to check file existence
+              setSelectedSession(currentSelection)
+            } else {
+              await invoke('read_session_file', { path: currentSelection.path })
+              // Selected session file still readable but not in scan results, keeping selection
             }
+          } catch (error) {
+            console.warn('[useSessions] Selected session file not readable, clearing selection:', error)
+            setSelectedSession(null)
           }
         }
       }
     } catch (error) {
       console.error('[useSessions] Failed to load sessions:', error)
-      alert(`${t('app.errors.loadSessions')}: ${error}`)
+      // Don't alert on mobile — connection errors are common on first load
     } finally {
       setLoading(false)
     }
   }, [t, isDemoMode, getDemoSessions])
+
+  const patchSessions = useCallback((diff: SessionsDiff) => {
+    setSessions(prev => {
+      const removedSet = new Set(diff.removed)
+      let changed = diff.removed.length > 0 && prev.some(s => removedSet.has(s.path))
+
+      let next = changed ? prev.filter(s => !removedSet.has(s.path)) : [...prev]
+
+      for (const u of diff.updated) {
+        const idx = next.findIndex(s => s.path === u.path)
+        if (idx >= 0) {
+          // Only replace if something actually changed
+          const existing = next[idx]
+          if (existing.modified !== u.modified
+            || existing.message_count !== u.message_count
+            || existing.name !== u.name
+            || existing.last_message !== u.last_message) {
+            next[idx] = u
+            changed = true
+          }
+        } else {
+          next.push(u)
+          changed = true
+        }
+      }
+
+      if (!changed) return prev
+
+      next.sort((a, b) => b.modified.localeCompare(a.modified))
+      return next
+    })
+
+    // Update selected session if it was in the diff
+    const currentSelection = selectedSessionRef.current
+    if (currentSelection) {
+      const removedSet = new Set(diff.removed)
+      if (removedSet.has(currentSelection.path)) {
+        setSelectedSession(null)
+      } else {
+        const updated = diff.updated.find(s => s.path === currentSelection.path)
+        if (updated) {
+          setSelectedSession(prev => prev ? { ...prev, ...updated } : null)
+        }
+      }
+    }
+  }, [])
 
   const handleDeleteSession = useCallback(async (session: SessionInfo) => {
     if (!confirm(t('app.confirm.deleteSession', { name: session.name || t('common.untitled') }))) {
@@ -157,6 +184,7 @@ export function useSessions(): UseSessionsReturn {
     selectedSession,
     setSelectedSession,
     loadSessions,
+    patchSessions,
     handleDeleteSession,
     handleRenameSession,
   }

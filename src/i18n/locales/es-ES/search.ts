@@ -1,0 +1,32 @@
+export const search = {
+  panel: {
+    placeholder: 'Buscar sesiones...',
+    searching: 'Buscando...',
+    results: '{count} resultado{count, plural, =1 {} other{s}}',
+  },
+  clear: 'Limpiar',
+  clearAll: 'Limpiar búsqueda (Esc)',
+  placeholder: 'Buscar en la sesión...',
+  noResults: 'Sin resultados',
+  previous: 'Resultado anterior (Shift+Enter)',
+  next: 'Siguiente resultado (Enter)',
+  close: 'Cerrar búsqueda (Esc)',
+  searching: 'Buscando...',
+  results: '{count} resultados',
+  fullText: {
+    placeholder: 'Buscar en todas las sesiones...',
+    resultsFound: '{{count}} coincidencias encontradas',
+    filters: 'Filtros',
+    role: {
+      all: 'Todos',
+      user: 'Usuario',
+      assistant: 'IA',
+    },
+    globPlaceholder: 'Ruta glob (ej. **/src/**)',
+    startTyping: 'Escribe para iniciar la búsqueda de texto completo',
+    sortScore: 'Relevancia',
+    sortNewest: 'Más reciente',
+    sortOldest: 'Más antiguo',
+    sortTitle: 'Ordenar por',
+  },
+} as const
