@@ -148,6 +148,32 @@ pub async fn dispatch(command: &str, payload: &Value) -> Result<Value, String> {
             Ok(serde_json::to_value(result).unwrap())
         }
 
+        "full_text_search" => {
+            let query = extract_string(payload, "query")?;
+            let role_filter = extract_string(payload, "roleFilter")?;
+            let glob_pattern = payload
+                .get("globPattern")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let page = payload
+                .get("page")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize;
+            let page_size = payload
+                .get("pageSize")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(20) as usize;
+            let result = crate::full_text_search(
+                query,
+                role_filter,
+                glob_pattern,
+                page,
+                page_size,
+            )
+            .await?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
+
         // Favorites
         "get_all_favorites" => {
             let result = crate::get_all_favorites().await?;

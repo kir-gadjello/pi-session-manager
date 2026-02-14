@@ -437,16 +437,24 @@ pub async fn rescan_changed_files(changed_paths: Vec<String>) -> Result<Sessions
 
         match parse_session_info(&path) {
             Ok((info, entries)) => {
-                // Upsert message entries for FTS (session already exists, safe)
+                // Get file modification time
+                let file_modified = match fs::metadata(&path).and_then(|m| m.modified()) {
+                    Ok(mt) => DateTime::from(mt),
+                    Err(_) => continue,
+                };
+
+                // Ensure session row exists before inserting message entries (FTS FK constraint)
+                if let Err(e) = sqlite_cache::upsert_session(&conn, &info, file_modified) {
+                    log::warn!("Failed to upsert session for {}: {}", info.path, e);
+                }
+
+                // Now upsert message entries for FTS
                 if let Err(e) = sqlite_cache::upsert_message_entries(&conn, &info.path, &entries) {
                     log::warn!("Failed to upsert message entries for {}: {}", info.path, e);
                 }
-                if let Ok(m) = fs::metadata(&path) {
-                    if let Ok(mt) = m.modified() {
-                        let file_modified: DateTime<Utc> = DateTime::from(mt);
-                        write_buffer::buffer_session_write(&info, file_modified);
-                    }
-                }
+
+                // Buffer for stats cache updates (periodic flush)
+                write_buffer::buffer_session_write(&info, file_modified);
 
                 diff.updated.push(info.clone());
 
