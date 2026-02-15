@@ -95,6 +95,7 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
         globPattern: glob || null,
         page: pageNum,
         pageSize: pageSize,
+        matchMode: 'any', // default mode; could be made configurable
       });
       setAllHits(prev => append ? [...prev, ...response.hits] : response.hits);
       setTotalHitsCount(response.total_hits);
@@ -275,15 +276,6 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
               placeholder={t('search.fullText.placeholder')}
               className="flex-1 bg-transparent border-none p-0 outline-none text-base font-medium text-foreground placeholder:text-muted-foreground"
             />
-            {query && (
-              <button
-                onClick={() => setQuery('')}
-                className="p-1 rounded-md hover:bg-[#2a2b36] transition-colors flex-shrink-0"
-                aria-label={t('search.clear')}
-              >
-                <X className="w-4 h-4 text-muted-foreground" />
-              </button>
-            )}
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex bg-[#252636]/50 p-1 rounded-lg border border-[#2a2b36]/50">
