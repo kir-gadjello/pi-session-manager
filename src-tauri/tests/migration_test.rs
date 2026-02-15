@@ -219,6 +219,9 @@ fn test_fts_vtable_corruption_triggers_database_recreation() {
     let original_home = env::var("HOME").ok();
     env::set_var("HOME", temp_dir.path());
 
+    // Clear any PPM_TEST_DB override from other tests to avoid interference
+    env::remove_var("PPM_TEST_DB");
+
     // Ensure clean state: no DB
     let db_path = pi_session_manager::sqlite_cache::get_db_path().unwrap();
     let _ = std::fs::remove_file(&db_path);
@@ -328,4 +331,82 @@ fn test_fts_vtable_corruption_triggers_database_recreation() {
     } else {
         env::remove_var("HOME");
     }
+}
+
+#[test]
+fn test_fts_rebuild_after_recreate() {
+    use chrono::Utc;
+    use std::env;
+    use tempfile::tempdir;
+
+    let temp_dir = tempdir().unwrap();
+    let db_path = temp_dir.path().join("test_rebuild.db");
+    // Set override env var for DB path to avoid interfering with other tests
+    env::set_var("PPM_TEST_DB", db_path);
+
+    let config = Config::default();
+
+    // Initialize DB and create tables
+    let conn = pi_session_manager::sqlite_cache::init_db_with_config(&config)
+        .expect("init should succeed");
+
+    // Immediately unset the override to prevent leaking to other tests
+    env::remove_var("PPM_TEST_DB");
+
+    // Insert a session and a message
+    let session_path = "/test/session_rebuild.jsonl".to_string();
+    conn.execute(
+        "INSERT INTO sessions (id, path, cwd, created, modified, file_modified, message_count, first_message, all_messages_text, user_messages_text, assistant_messages_text, last_message, last_message_role, cached_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        params![
+            "sess_rebuild",
+            &session_path,
+            "/cwd",
+            "2025-01-01T00:00:00Z",
+            "2025-01-01T00:00:00Z",
+            "2025-01-01T00:00:00Z",
+            1i64,
+            "Rebuild test",
+            "",
+            "",
+            "",
+            "",
+            "",
+            Utc::now().to_rfc3339(),
+        ],
+    ).unwrap();
+
+    conn.execute(
+        "INSERT INTO message_entries (id, session_path, role, content, timestamp) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params!["m_rebuild1", &session_path, "user", "rebuild test message", "2025-01-01T00:00:00Z"]
+    ).unwrap();
+
+    // Verify FTS works before dropping
+    let results_before =
+        pi_session_manager::sqlite_cache::search_message_fts(&conn, "rebuild", None, 10).unwrap();
+    assert_eq!(results_before.len(), 1);
+    assert_eq!(results_before[0].1, session_path);
+
+    // Simulate FTS loss by dropping the virtual table
+    conn.execute("DROP TABLE message_fts", []).unwrap();
+
+    // Ensure FTS is gone
+    let fts_exists: bool = conn
+        .query_row(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='message_fts'",
+            [],
+            |row| Ok(true),
+        )
+        .unwrap_or(false);
+    assert!(!fts_exists);
+
+    // Re-run ensure_message_fts_schema to recreate and rebuild index
+    pi_session_manager::sqlite_cache::ensure_message_fts_schema(&conn).unwrap();
+
+    // Verify FTS is back and populated without reinserting data
+    let results_after =
+        pi_session_manager::sqlite_cache::search_message_fts(&conn, "rebuild", None, 10).unwrap();
+    assert_eq!(results_after.len(), 1, "Expected one hit after rebuild");
+    assert_eq!(results_after[0].1, session_path);
+
+    // Cleanup: temp_dir is dropped automatically
 }

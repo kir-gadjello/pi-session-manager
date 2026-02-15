@@ -385,6 +385,7 @@ pub fn ensure_message_fts_schema(conn: &Connection) -> Result<(), String> {
     if !fts_exists {
         info!("[FTS] Creating message_fts virtual table");
         create_message_fts5(conn)?;
+        rebuild_message_fts_index(conn)?;
         // Create triggers to keep the index in sync with message_entries.
         create_message_entries_triggers(conn)?;
         return Ok(());
@@ -409,6 +410,7 @@ pub fn ensure_message_fts_schema(conn: &Connection) -> Result<(), String> {
         conn.execute("DROP TABLE IF EXISTS message_fts", [])
             .map_err(|e| format!("Failed to drop old message_fts: {}", e))?;
         create_message_fts5(conn)?;
+        rebuild_message_fts_index(conn)?;
         // Index will be automatically rebuilt from message_entries content.
         info!("[Migration] Recreated message_fts virtual table");
     } else {
@@ -428,6 +430,7 @@ pub fn ensure_message_fts_schema(conn: &Connection) -> Result<(), String> {
             conn.execute("DROP TABLE IF EXISTS message_fts", [])
                 .map_err(|e| format!("Failed to drop manual message_fts: {}", e))?;
             create_message_fts5(conn)?;
+            rebuild_message_fts_index(conn)?;
             // Index will be automatically rebuilt from message_entries content.
             info!("[Migration] Converted message_fts to auto-sync");
         } else {
@@ -631,6 +634,13 @@ fn create_message_fts5(conn: &Connection) -> Result<(), String> {
     .map_err(|e| format!("Failed to create message_fts: {}", e))?;
 
     info!("[FTS] Created message_fts virtual table (content auto-sync enabled)");
+    Ok(())
+}
+
+fn rebuild_message_fts_index(conn: &Connection) -> Result<(), String> {
+    info!("[FTS] Rebuilding message_fts index from message_entries...");
+    conn.execute("INSERT INTO message_fts(message_fts) VALUES('rebuild')", [])
+        .map_err(|e| format!("Failed to rebuild FTS index: {}", e))?;
     Ok(())
 }
 
