@@ -91,10 +91,10 @@ export default function FullTextSearch({ isOpen, onClose, onSelectResult }: Full
     try {
       const response = await invoke<FullTextSearchResponse>('full_text_search', {
         query: searchQuery,
-        role_filter: role,
-        glob_pattern: glob || null,
+        roleFilter: role,
+        globPattern: glob || null,
         page: pageNum,
-        page_size: pageSize,
+        pageSize: pageSize,
       });
       setAllHits(prev => append ? [...prev, ...response.hits] : response.hits);
       setTotalHitsCount(response.total_hits);
