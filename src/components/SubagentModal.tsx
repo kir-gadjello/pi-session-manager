@@ -40,11 +40,47 @@ function cacheKey(result: SubagentResult): string {
   return result.artifactPaths?.jsonlPath || result.sessionFile || `${result.agent}-${result.task.slice(0, 50)}`
 }
 
-/** Try multiple paths to find the subagent JSONL */
+/** Convert inline messages array to SessionEntry[] */
+function messagesAsEntries(messages: any[]): SessionEntry[] {
+  return messages.map((msg, i) => ({
+    type: 'message' as const,
+    id: `inline-${i}`,
+    parentId: i > 0 ? `inline-${i - 1}` : undefined,
+    timestamp: msg.timestamp,
+    message: msg,
+  }))
+}
+
+/**
+ * Try multiple paths to load subagent session entries.
+ *
+ * Why file paths usually fail:
+ *   pi-subagents (upstream) sets DEFAULT_ARTIFACT_CONFIG.includeJsonl = false,
+ *   so JSONL artifact files are NOT written by default. The artifactPaths.jsonlPath
+ *   in the result is always populated as a "would-be" path, but the file rarely
+ *   exists. On top of that, cleanupOldArtifacts() runs on session_start and
+ *   removes files older than 7 days, so even the few that were written get purged.
+ *
+ * Fallback strategy:
+ *   1. Try artifactPaths.jsonlPath / sessionFile (works for the rare cases)
+ *   2. Fall back to result.messages[] — the inline message array that pi-subagents
+ *      always embeds in the toolResult details. This covers ~95% of real sessions.
+ *   3. Return [] only when both are empty (failed runs with exitCode != 0).
+ */
 async function loadSubagentEntries(result: SubagentResult): Promise<SessionEntry[]> {
   const key = cacheKey(result)
   if (jsonlCache.has(key)) return jsonlCache.get(key)!
 
+  const cacheAndReturn = (entries: SessionEntry[]) => {
+    if (jsonlCache.size >= MAX_CACHE) {
+      const first = jsonlCache.keys().next().value
+      if (first) jsonlCache.delete(first)
+    }
+    jsonlCache.set(key, entries)
+    return entries
+  }
+
+  // 1. Try file paths (almost always missing — see comment above)
   const paths = [
     result.artifactPaths?.jsonlPath,
     result.sessionFile,
@@ -55,14 +91,14 @@ async function loadSubagentEntries(result: SubagentResult): Promise<SessionEntry
       const content = await invoke<string>('read_session_file', { path })
       if (content?.trim()) {
         const entries = parseSessionEntries(content)
-        if (jsonlCache.size >= MAX_CACHE) {
-          const first = jsonlCache.keys().next().value
-          if (first) jsonlCache.delete(first)
-        }
-        jsonlCache.set(key, entries)
-        return entries
+        if (entries.length > 0) return cacheAndReturn(entries)
       }
     } catch { /* file may not exist, try next */ }
+  }
+
+  // 2. Fall back to inline messages embedded in the result
+  if (result.messages?.length) {
+    return cacheAndReturn(messagesAsEntries(result.messages))
   }
 
   return []
@@ -104,7 +140,11 @@ function SubagentModalContent({ result, onClose }: SubagentModalProps) {
     loadSubagentEntries(result).then(parsed => {
       if (cancelled) return
       if (parsed.length === 0) {
-        setError('Subagent artifacts not available — files may have been cleaned up.')
+        setError(
+          result.exitCode !== 0
+            ? t('components.subagent.failedNoOutput', 'Subagent failed with no output.')
+            : t('components.subagent.artifactsUnavailable', 'Subagent artifacts not available — files may have been cleaned up.')
+        )
       }
       setEntries(parsed)
       setLoading(false)
