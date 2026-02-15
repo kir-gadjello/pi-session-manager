@@ -3,9 +3,16 @@ use pi_session_manager::sqlite_cache;
 use rusqlite::{params, Connection};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
+use lazy_static::lazy_static;
+
+lazy_static! {
+    static ref MIGRATION_LOCK: Mutex<()> = Mutex::new(());
+}
 
 #[test]
 fn test_database_migration_from_old_schema() {
+    let _lock = MIGRATION_LOCK.lock().unwrap();
     let test_db_path = PathBuf::from("/tmp/pi_migration_test.db");
     if test_db_path.exists() {
         fs::remove_file(&test_db_path).ok();
@@ -154,6 +161,7 @@ fn test_database_migration_from_old_schema() {
 
 #[test]
 fn test_database_corruption_recovery() {
+    let _lock = MIGRATION_LOCK.lock().unwrap();
     let test_db_path = PathBuf::from("/tmp/pi_corruption_test.db");
     if test_db_path.exists() {
         fs::remove_file(&test_db_path).ok();
@@ -210,6 +218,7 @@ fn test_database_corruption_recovery() {
 
 #[test]
 fn test_fts_vtable_corruption_triggers_database_recreation() {
+    let _lock = MIGRATION_LOCK.lock().unwrap();
     // Use a temp directory to avoid interfering with real user data
     use chrono::Utc;
     use std::env;
@@ -283,7 +292,28 @@ fn test_fts_vtable_corruption_triggers_database_recreation() {
     let conn2 = pi_session_manager::sqlite_cache::init_db_with_config(&config)
         .expect("init after corruption should succeed");
 
-    // Verify that the original session data is gone (DB was recreated)
+    // Look for backup file in the same directory (should exist from recovery)
+    let parent_dir = db_path.parent().unwrap();
+    use std::fs;
+    // List all entries for debugging
+    let all_entries: Vec<_> = fs::read_dir(parent_dir)
+        .expect("read dir")
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    println!("DEBUG: all entries in parent: {:?}", all_entries);
+    let mut backup_files = Vec::new();
+    for entry_name in all_entries {
+        if let Some(name_str) = entry_name.to_str() {
+            if name_str.contains(".corrupted.") {
+                backup_files.push(parent_dir.join(&entry_name));
+            }
+        }
+    }
+    assert_eq!(backup_files.len(), 1, "Expected exactly one backup file, got {:?}", backup_files);
+    let backup_path = &backup_files[0];
+    assert!(backup_path.exists(), "Backup file should exist");
+
+    // Verify that the sessions table is empty (fresh DB)
     let session_count: i64 = conn2
         .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
         .unwrap();
@@ -335,6 +365,7 @@ fn test_fts_vtable_corruption_triggers_database_recreation() {
 
 #[test]
 fn test_fts_rebuild_after_recreate() {
+    let _lock = MIGRATION_LOCK.lock().unwrap();
     use chrono::Utc;
     use std::env;
     use tempfile::tempdir;

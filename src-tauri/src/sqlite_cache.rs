@@ -55,6 +55,17 @@ pub fn init_db_with_config(config: &Config) -> Result<Connection, String> {
                 e
             );
             if db_path.exists() {
+                // Backup corrupted DB before deletion
+                let backup_path = {
+                    let file_name = db_path.file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("db");
+                    let parent = db_path.parent().unwrap_or_else(|| Path::new("."));
+                    parent.join(format!("{}.corrupted.{}", file_name, Utc::now().timestamp()))
+                };
+                fs::copy(&db_path, &backup_path)
+                    .map_err(|e| format!("Failed to backup corrupted DB to {:?}: {}", backup_path, e))?;
+                info!("Backed up corrupted DB to {:?}", backup_path);
                 fs::remove_file(&db_path)
                     .map_err(|err| format!("Failed to delete corrupted DB: {}", err))?;
             }
