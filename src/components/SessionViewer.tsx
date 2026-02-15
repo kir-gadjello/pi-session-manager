@@ -139,9 +139,14 @@ function SessionViewerContent({ session, onExport, onRename, onBack, onWebResume
         if (cached) {
           setEntries(cached.entries)
           setLineCount(cached.lineCount)
-          const lastMessage = cached.entries.filter(e => e.type === 'message').pop()
-          if (lastMessage) setActiveEntryId(lastMessage.id)
-          pendingScrollToBottomRef.current = true
+          if (initialEntryId && cached.entries.some(e => e.id === initialEntryId)) {
+            setActiveEntryId(initialEntryId)
+            pendingScrollToBottomRef.current = false
+          } else {
+            const lastMessage = cached.entries.filter(e => e.type === 'message').pop()
+            if (lastMessage) setActiveEntryId(lastMessage.id)
+            pendingScrollToBottomRef.current = true
+          }
           return
         }
 
@@ -164,13 +169,16 @@ function SessionViewerContent({ session, onExport, onRename, onBack, onWebResume
         setLineCount(lines)
         setEntries(parsedEntries)
 
-        const lastMessage = parsedEntries.filter(e => e.type === 'message').pop()
-        if (lastMessage) {
-          setActiveEntryId(lastMessage.id)
+        if (initialEntryId && parsedEntries.some(e => e.id === initialEntryId)) {
+          setActiveEntryId(initialEntryId)
+          pendingScrollToBottomRef.current = false
+        } else {
+          const lastMessage = parsedEntries.filter(e => e.type === 'message').pop()
+          if (lastMessage) {
+            setActiveEntryId(lastMessage.id)
+          }
+          pendingScrollToBottomRef.current = true
         }
-
-        // 首次加载后滚动到底部
-        pendingScrollToBottomRef.current = true
       } catch (err) {
         if (!cancelled) {
           console.error('[SessionViewer] Failed to load session:', err)
