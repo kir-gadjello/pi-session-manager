@@ -127,6 +127,7 @@ fn main() {
             pi_session_manager::get_session_entries,
             pi_session_manager::search_sessions,
             pi_session_manager::search_sessions_fts,
+            pi_session_manager::full_text_search,
             pi_session_manager::delete_session,
             pi_session_manager::export_session,
             pi_session_manager::rename_session,
