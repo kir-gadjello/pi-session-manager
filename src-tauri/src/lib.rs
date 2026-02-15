@@ -4,6 +4,7 @@ pub mod compression;
 pub mod config;
 pub mod dispatch;
 pub mod export;
+pub mod metrics;
 pub mod models;
 pub mod scanner;
 pub mod scanner_scheduler;
@@ -129,6 +130,7 @@ pub fn run() {
                                     &conn,
                                     &entry.session,
                                     entry.file_modified,
+                                    None,
                                 );
                             }
                             for entry in details {
@@ -157,6 +159,7 @@ pub fn run() {
                                 &conn,
                                 &entry.session,
                                 entry.file_modified,
+                                None,
                             );
                         }
                         for entry in details {

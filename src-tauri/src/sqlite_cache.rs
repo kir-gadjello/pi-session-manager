@@ -11,6 +11,9 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info, warn};
 
+/// Current schema version for migrations
+const LATEST_SCHEMA_VERSION: i64 = 2;
+
 pub fn get_db_path() -> Result<PathBuf, String> {
     // Allow explicit test override
     if let Ok(test_db) = std::env::var("PPM_TEST_DB") {
@@ -66,6 +69,8 @@ pub fn init_db_with_config(config: &Config) -> Result<Connection, String> {
                 fs::copy(&db_path, &backup_path)
                     .map_err(|e| format!("Failed to backup corrupted DB to {:?}: {}", backup_path, e))?;
                 info!("Backed up corrupted DB to {:?}", backup_path);
+                // Increment recovery counter
+                crate::metrics::inc_corruption_recovery();
                 fs::remove_file(&db_path)
                     .map_err(|err| format!("Failed to delete corrupted DB: {}", err))?;
             }
@@ -73,6 +78,134 @@ pub fn init_db_with_config(config: &Config) -> Result<Connection, String> {
         }
         Err(e) => Err(e),
     }
+}
+
+/// Ensure the schema_version table exists and initialize to 0 if empty.
+fn ensure_schema_version_table(conn: &Connection) -> Result<(), String> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER NOT NULL
+        )",
+        [],
+    )
+    .map_err(|e| format!("Failed to create schema_version table: {}", e))?;
+
+    // Check if any row exists; if not, insert version 0.
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM schema_version", [], |row| row.get(0))
+        .unwrap_or(0);
+    if count == 0 {
+        conn.execute("INSERT INTO schema_version (version) VALUES (0)", [])
+            .map_err(|e| format!("Failed to insert initial schema version: {}", e))?;
+    }
+    Ok(())
+}
+
+/// Get the current schema version (assumes table exists and has at least one row)
+fn get_current_version(conn: &Connection) -> Result<i64, String> {
+    let version: i64 = conn
+        .query_row("SELECT version FROM schema_version LIMIT 1", [], |row| row.get(0))
+        .map_err(|e| format!("Failed to get schema version: {}", e))?;
+    Ok(version)
+}
+
+/// Set the current schema version
+fn set_schema_version(conn: &Connection, version: i64) -> Result<(), String> {
+    conn.execute("UPDATE schema_version SET version = ?", params![version])
+        .map_err(|e| format!("Failed to set schema version: {}", e))?;
+    Ok(())
+}
+
+/// Run migrations from current_version+1 up to LATEST_SCHEMA_VERSION.
+fn apply_migrations(conn: &Connection, from_version: i64) -> Result<(), String> {
+    let mut current = from_version;
+    while current < LATEST_SCHEMA_VERSION {
+        current += 1;
+        match current {
+            1 => migration_1(conn)?,
+            2 => migration_2(conn)?,
+            _ => return Err(format!("Unknown migration version: {}", current)),
+        }
+        // Update version after successful migration
+        set_schema_version(conn, current)?;
+    }
+    Ok(())
+}
+
+/// Migration to version 1: adds columns that were previously added via ad-hoc ALTER TABLE.
+fn migration_1(conn: &Connection) -> Result<(), String> {
+    // Helper to check if a column exists in a table
+    fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, String> {
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info({})", table))
+            .map_err(|e| format!("Failed to prepare PRAGMA table_info for {}: {}", table, e))?;
+        let column_names: Vec<String> = stmt
+            .query_map([], |row| row.get(1))
+            .map_err(|e| format!("Failed to query columns for {}: {}", table, e))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Failed to collect columns for {}: {}", table, e))?;
+        Ok(column_names.iter().any(|name| name == column))
+    }
+
+    // For sessions table
+    if !column_exists(conn, "sessions", "last_message")? {
+        conn.execute(
+            "ALTER TABLE sessions ADD COLUMN last_message TEXT",
+            [],
+        )
+        .map_err(|e| format!("Failed to add last_message column: {}", e))?;
+    }
+    if !column_exists(conn, "sessions", "last_message_role")? {
+        conn.execute(
+            "ALTER TABLE sessions ADD COLUMN last_message_role TEXT",
+            [],
+        )
+        .map_err(|e| format!("Failed to add last_message_role column: {}", e))?;
+    }
+    if !column_exists(conn, "sessions", "user_messages_text")? {
+        conn.execute(
+            "ALTER TABLE sessions ADD COLUMN user_messages_text TEXT",
+            [],
+        )
+        .map_err(|e| format!("Failed to add user_messages_text column: {}", e))?;
+    }
+    if !column_exists(conn, "sessions", "assistant_messages_text")? {
+        conn.execute(
+            "ALTER TABLE sessions ADD COLUMN assistant_messages_text TEXT",
+            [],
+        )
+        .map_err(|e| format!("Failed to add assistant_messages_text column: {}", e))?;
+    }
+
+    // For tags table
+    if !column_exists(conn, "tags", "auto_rules")? {
+        conn.execute(
+            "ALTER TABLE tags ADD COLUMN auto_rules TEXT",
+            [],
+        )
+        .map_err(|e| format!("Failed to add auto_rules column: {}", e))?;
+    }
+    if !column_exists(conn, "tags", "parent_id")? {
+        conn.execute(
+            "ALTER TABLE tags ADD COLUMN parent_id TEXT",
+            [],
+        )
+        .map_err(|e| format!("Failed to add parent_id column: {}", e))?;
+    }
+
+    Ok(())
+}
+
+/// Migration to version 2: add performance indexes.
+fn migration_2(conn: &Connection) -> Result<(), String> {
+    // Composite index on session_path and timestamp for per-session ordering
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_message_entries_session_time ON message_entries(session_path, timestamp)",
+        [],
+    )
+    .map_err(|e| format!("Migration 2 failed: {}", e))?;
+
+    Ok(())
 }
 
 fn open_and_init_db(db_path: &Path, config: &Config) -> Result<Connection, String> {
@@ -91,6 +224,9 @@ fn open_and_init_db(db_path: &Path, config: &Config) -> Result<Connection, Strin
     // Enable foreign key constraints
     conn.execute("PRAGMA foreign_keys=ON;", [])
         .map_err(|e| format!("Failed to enable foreign keys: {}", e))?;
+
+    // Ensure schema_version table exists for migrations
+    ensure_schema_version_table(&conn)?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS sessions (
@@ -164,25 +300,6 @@ fn open_and_init_db(db_path: &Path, config: &Config) -> Result<Connection, Strin
     )
     .map_err(|e| format!("Failed to create favorites table: {}", e))?;
 
-    // 迁移：添加 last_message 和 last_message_role 字段（如果不存在）
-    conn.execute("ALTER TABLE sessions ADD COLUMN last_message TEXT", [])
-        .ok(); // 忽略错误（字段可能已存在）
-
-    conn.execute("ALTER TABLE sessions ADD COLUMN last_message_role TEXT", [])
-        .ok(); // 忽略错误（字段可能已存在）
-
-    conn.execute(
-        "ALTER TABLE sessions ADD COLUMN user_messages_text TEXT",
-        [],
-    )
-    .ok(); // 忽略错误
-
-    conn.execute(
-        "ALTER TABLE sessions ADD COLUMN assistant_messages_text TEXT",
-        [],
-    )
-    .ok(); // 忽略错误
-
     // Create tags table
     conn.execute(
         "CREATE TABLE IF NOT EXISTS tags (
@@ -209,14 +326,6 @@ fn open_and_init_db(db_path: &Path, config: &Config) -> Result<Connection, Strin
         [],
     )
     .map_err(|e| format!("Failed to create session_tags table: {e}"))?;
-
-    // Migration: add auto_rules column to tags
-    conn.execute("ALTER TABLE tags ADD COLUMN auto_rules TEXT", [])
-        .ok();
-
-    // Migration: add parent_id column to tags for hierarchical labels
-    conn.execute("ALTER TABLE tags ADD COLUMN parent_id TEXT", [])
-        .ok();
 
     // Insert builtin tags based on system language
     let now = Utc::now().to_rfc3339();
@@ -302,6 +411,12 @@ fn open_and_init_db(db_path: &Path, config: &Config) -> Result<Connection, Strin
         if migrated {
             info!("[Migration] message_entries schema updated with missing columns");
         }
+    }
+
+    // Apply versioned schema migrations if needed
+    let current_version = get_current_version(&conn)?;
+    if current_version < LATEST_SCHEMA_VERSION {
+        apply_migrations(&conn, current_version)?;
     }
 
     if config.enable_fts5 {
@@ -659,6 +774,7 @@ pub fn upsert_session(
     conn: &Connection,
     session: &SessionInfo,
     file_modified: DateTime<Utc>,
+    entries: Option<&[SessionEntry]>,
 ) -> Result<(), String> {
     conn.execute(
         "INSERT INTO sessions (id, path, cwd, name, created, modified, file_modified, message_count, first_message, all_messages_text, user_messages_text, assistant_messages_text, last_message, last_message_role, cached_at, access_count, last_accessed)
@@ -709,8 +825,12 @@ pub fn upsert_session(
         );
         // Clear existing entries for this session to avoid duplicates
         delete_message_entries_for_session(conn, &session.path)?;
-        // Insert fresh entries
-        insert_message_entries(conn, session)?;
+        // Insert fresh entries (use pre-parsed if available to avoid re-reading file)
+        if let Some(entries) = entries {
+            upsert_message_entries(conn, &session.path, entries)?;
+        } else {
+            insert_message_entries(conn, session)?;
+        }
         debug!(
             "[Upsert] Completed message entries for session: {}",
             session.path

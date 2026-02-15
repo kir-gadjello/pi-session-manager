@@ -436,14 +436,14 @@ pub async fn rescan_changed_files(changed_paths: Vec<String>) -> Result<Sessions
         }
 
         match parse_session_info(&path) {
-            Ok((info, _entries)) => {
+            Ok((info, entries)) => {
                 let file_modified = match fs::metadata(&path).and_then(|m| m.modified()) {
                     Ok(mt) => DateTime::from(mt),
                     Err(_) => continue,
                 };
 
                 // Ensure session row exists (also populates message_entries via insert_message_entries)
-                if let Err(e) = sqlite_cache::upsert_session(&conn, &info, file_modified) {
+                if let Err(e) = sqlite_cache::upsert_session(&conn, &info, file_modified, Some(&entries)) {
                     log::warn!("Failed to upsert session for {}: {}", info.path, e);
                 }
 

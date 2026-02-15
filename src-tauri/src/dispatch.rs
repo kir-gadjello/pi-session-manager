@@ -170,8 +170,20 @@ pub async fn dispatch(command: &str, payload: &Value) -> Result<Value, String> {
                 .or_else(|| payload.get("pageSize"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(20) as usize;
-            let result =
-                crate::full_text_search(query, role_filter, glob_pattern, page, page_size).await?;
+            let match_mode = payload
+                .get("match_mode")
+                .or_else(|| payload.get("matchMode"))
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let result = crate::full_text_search(
+                query,
+                role_filter,
+                glob_pattern,
+                page,
+                page_size,
+                match_mode,
+            )
+            .await?;
             Ok(serde_json::to_value(result).unwrap())
         }
 

@@ -55,8 +55,8 @@ fn setup_test_db(sessions: &[(&str, &str, &[(&str, &str)])]) -> tempfile::TempDi
         fs::write(&path, content).unwrap();
 
         let (session, entries) = scanner::parse_session_info(&path).unwrap();
-        sqlite_cache::upsert_session(&conn, &session, Utc::now()).unwrap();
-        sqlite_cache::upsert_message_entries(&conn, &session.path, &entries).unwrap();
+        sqlite_cache::upsert_session(&conn, &session, Utc::now(), Some(&entries)).unwrap();
+        // No separate upsert_message_entries; it's handled inside upsert_session
     }
 
     // Drop connection to avoid locks when full_text_search opens its own connection
@@ -112,7 +112,7 @@ async fn test_full_text_search_command_basic() {
 
     // Test 1: Search for "banana"
     let response: FullTextSearchResponse =
-        full_text_search("banana".to_string(), "all".to_string(), None, 0, 10)
+        full_text_search("banana".to_string(), "all".to_string(), None, 0, 10, None)
             .await
             .unwrap();
 
@@ -129,7 +129,7 @@ async fn test_full_text_search_command_basic() {
 
     // Test 2: Search for "rust"
     let response: FullTextSearchResponse =
-        full_text_search("rust".to_string(), "all".to_string(), None, 0, 10)
+        full_text_search("rust".to_string(), "all".to_string(), None, 0, 10, None)
             .await
             .unwrap();
 
@@ -140,7 +140,7 @@ async fn test_full_text_search_command_basic() {
 
     // Test 3: Role filter - user only on "banana"
     let response: FullTextSearchResponse =
-        full_text_search("banana".to_string(), "user".to_string(), None, 0, 10)
+        full_text_search("banana".to_string(), "user".to_string(), None, 0, 10, None)
             .await
             .unwrap();
 
@@ -150,7 +150,7 @@ async fn test_full_text_search_command_basic() {
 
     // Test 4: Role filter - assistant only on "banana"
     let response: FullTextSearchResponse =
-        full_text_search("banana".to_string(), "assistant".to_string(), None, 0, 10)
+        full_text_search("banana".to_string(), "assistant".to_string(), None, 0, 10, None)
             .await
             .unwrap();
 
@@ -159,7 +159,7 @@ async fn test_full_text_search_command_basic() {
 
     // Test 5: Empty query
     let response: FullTextSearchResponse =
-        full_text_search("".to_string(), "all".to_string(), None, 0, 10)
+        full_text_search("".to_string(), "all".to_string(), None, 0, 10, None)
             .await
             .unwrap();
     assert_eq!(response.total_hits, 0);
@@ -167,7 +167,7 @@ async fn test_full_text_search_command_basic() {
 
     // Test 6: No match
     let response: FullTextSearchResponse =
-        full_text_search("xyznonexistent".to_string(), "all".to_string(), None, 0, 10)
+        full_text_search("xyznonexistent".to_string(), "all".to_string(), None, 0, 10, None)
             .await
             .unwrap();
     assert_eq!(response.total_hits, 0);
@@ -175,14 +175,14 @@ async fn test_full_text_search_command_basic() {
 
     // Test 7: Pagination
     let page0: FullTextSearchResponse =
-        full_text_search("rust".to_string(), "all".to_string(), None, 0, 2)
+        full_text_search("rust".to_string(), "all".to_string(), None, 0, 2, None)
             .await
             .unwrap();
     assert!(page0.total_hits >= 2);
     assert!(page0.hits.len() <= 2);
 
     let page1: FullTextSearchResponse =
-        full_text_search("rust".to_string(), "all".to_string(), None, 1, 2)
+        full_text_search("rust".to_string(), "all".to_string(), None, 1, 2, None)
             .await
             .unwrap();
     let total_from_pages = page0.hits.len() + page1.hits.len();
@@ -195,6 +195,7 @@ async fn test_full_text_search_command_basic() {
         Some("/cwd1/*".to_string()),
         0,
         10,
+        None,
     )
     .await
     .unwrap();
@@ -205,7 +206,7 @@ async fn test_full_text_search_command_basic() {
 
     // Test 9: Score is positive
     let response: FullTextSearchResponse =
-        full_text_search("banana".to_string(), "all".to_string(), None, 0, 10)
+        full_text_search("banana".to_string(), "all".to_string(), None, 0, 10, None)
             .await
             .unwrap();
     for hit in &response.hits {
@@ -227,7 +228,7 @@ async fn test_full_text_search_pagination_across_sessions() {
 
     // Query "banana" with page size 3, per-session limit 3
     let page0: FullTextSearchResponse =
-        full_text_search("banana".to_string(), "all".to_string(), None, 0, 3)
+        full_text_search("banana".to_string(), "all".to_string(), None, 0, 3, None)
             .await
             .unwrap();
 
@@ -238,7 +239,7 @@ async fn test_full_text_search_pagination_across_sessions() {
 
     // Query "apple" with page size 10
     let page0: FullTextSearchResponse =
-        full_text_search("apple".to_string(), "all".to_string(), None, 0, 10)
+        full_text_search("apple".to_string(), "all".to_string(), None, 0, 10, None)
             .await
             .unwrap();
     assert_eq!(page0.total_hits, 3);
@@ -258,7 +259,7 @@ async fn test_full_text_search_result_structure() {
     )]);
 
     let response: FullTextSearchResponse =
-        full_text_search("hello".to_string(), "all".to_string(), None, 0, 10)
+        full_text_search("hello".to_string(), "all".to_string(), None, 0, 10, None)
             .await
             .unwrap();
 
@@ -304,6 +305,7 @@ async fn test_full_text_search_escaping_special_chars() {
         None,
         0,
         10,
+        None,
     )
     .await
     .unwrap();
@@ -311,14 +313,14 @@ async fn test_full_text_search_escaping_special_chars() {
 
     // Search for backslash
     let response: FullTextSearchResponse =
-        full_text_search("backslash".to_string(), "all".to_string(), None, 0, 10)
+        full_text_search("backslash".to_string(), "all".to_string(), None, 0, 10, None)
             .await
             .unwrap();
     assert!(!response.hits.is_empty());
 
     // Search with quote in query
     let response: FullTextSearchResponse =
-        full_text_search(r#""double""#.to_string(), "all".to_string(), None, 0, 10)
+        full_text_search(r#""double""#.to_string(), "all".to_string(), None, 0, 10, None)
             .await
             .unwrap();
     // Should not panic
@@ -343,7 +345,7 @@ async fn test_full_text_search_after_session_update() {
 
     // Verify initial search
     let resp1: FullTextSearchResponse =
-        full_text_search("Initial".to_string(), "all".to_string(), None, 0, 10)
+        full_text_search("Initial".to_string(), "all".to_string(), None, 0, 10, None)
             .await
             .unwrap();
     assert!(!resp1.hits.is_empty());
@@ -364,7 +366,7 @@ async fn test_full_text_search_after_session_update() {
 
     // Search for "Updated"
     let resp2: FullTextSearchResponse =
-        full_text_search("Updated".to_string(), "all".to_string(), None, 0, 10)
+        full_text_search("Updated".to_string(), "all".to_string(), None, 0, 10, None)
             .await
             .unwrap();
     assert!(!resp2.hits.is_empty());
@@ -372,7 +374,7 @@ async fn test_full_text_search_after_session_update() {
 
     // Original "Initial" should still be there
     let resp3: FullTextSearchResponse =
-        full_text_search("Initial".to_string(), "all".to_string(), None, 0, 10)
+        full_text_search("Initial".to_string(), "all".to_string(), None, 0, 10, None)
             .await
             .unwrap();
     assert!(!resp3.hits.is_empty());
@@ -398,7 +400,7 @@ async fn test_full_text_search_cascade_delete() {
 
     // Verify both searchable
     let resp_before: FullTextSearchResponse =
-        full_text_search("deleteme".to_string(), "all".to_string(), None, 0, 10)
+        full_text_search("deleteme".to_string(), "all".to_string(), None, 0, 10, None)
             .await
             .unwrap();
     assert!(!resp_before.hits.is_empty());
@@ -431,17 +433,178 @@ async fn test_full_text_search_cascade_delete() {
 
     // Search for "deleteme" should not find anything
     let resp_after: FullTextSearchResponse =
-        full_text_search("deleteme".to_string(), "all".to_string(), None, 0, 10)
+        full_text_search("deleteme".to_string(), "all".to_string(), None, 0, 10, None)
             .await
             .unwrap();
     assert!(resp_after.hits.is_empty());
 
     // Search for "keepme" should still work
     let resp_keep: FullTextSearchResponse =
-        full_text_search("keepme".to_string(), "all".to_string(), None, 0, 10)
+        full_text_search("keepme".to_string(), "all".to_string(), None, 0, 10, None)
             .await
             .unwrap();
     assert!(!resp_keep.hits.is_empty());
 
     println!("✅ Cascade delete test passed!");
+}
+
+#[tokio::test]
+async fn test_full_text_search_per_session_limit_uses_recent() {
+    let _lock = TEST_DB_LOCK.lock().unwrap();
+
+    let _temp_dir = setup_test_db(&[
+        (
+            "s1",
+            "/cwd1",
+            &[
+                ("user", "test"),
+                ("user", "test"),
+                ("user", "test"),
+                ("user", "test"),
+                ("user", "test"),
+            ],
+        ),
+    ]);
+
+    // Search for "test" with page size 10 to retrieve all hits (per-session limit applies)
+    let response: FullTextSearchResponse =
+        full_text_search("test".to_string(), "all".to_string(), None, 0, 10, None)
+            .await
+            .unwrap();
+
+    // Per-session limit is 3, so total_hits should be 3
+    assert_eq!(response.total_hits, 3);
+    assert_eq!(response.hits.len(), 3);
+
+    // All hits from session s1
+    assert!(response.hits.iter().all(|h| h.session_id == "s1"));
+
+    // Verify that the hits correspond to the three most recent messages (msg2, msg3, msg4)
+    let entry_ids: Vec<String> = response.hits.iter().map(|h| h.entry_id.clone()).collect();
+    assert!(entry_ids.contains(&"s1-msg2".to_string()));
+    assert!(entry_ids.contains(&"s1-msg3".to_string()));
+    assert!(entry_ids.contains(&"s1-msg4".to_string()));
+    // The older messages (msg0, msg1) should not be present
+    assert!(!entry_ids.contains(&"s1-msg0".to_string()));
+    assert!(!entry_ids.contains(&"s1-msg1".to_string()));
+
+    println!("✅ Per-session limit uses most recent messages test passed!");
+}
+
+#[tokio::test]
+async fn test_full_text_search_role_filter_case_insensitive() {
+    let _lock = TEST_DB_LOCK.lock().unwrap();
+
+    let _temp_dir = setup_test_db(&[(
+        "s1",
+        "/cwd1",
+        &[
+            ("user", "Hello world"),
+            ("assistant", "Hi there!"),
+        ],
+    )]);
+
+    // Search with uppercase "USER" should still return only user messages
+    let response: FullTextSearchResponse = full_text_search(
+        "Hello".to_string(),
+        "USER".to_string(), // case-insensitive
+        None,
+        0,
+        10,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(!response.hits.is_empty());
+    assert!(response.hits.iter().all(|h| h.role == "user"));
+
+    // Mixed case "AssIstant" should return only assistant messages for "Hi"
+    let response: FullTextSearchResponse = full_text_search(
+        "Hi".to_string(),
+        "AssIstant".to_string(),
+        None,
+        0,
+        10,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(!response.hits.is_empty());
+    assert!(response.hits.iter().all(|h| h.role == "assistant"));
+
+    println!("✅ Role filter case insensitivity test passed!");
+}
+
+#[tokio::test]
+async fn test_full_text_search_match_modes() {
+    let _lock = TEST_DB_LOCK.lock().unwrap();
+
+    let _temp_dir = setup_test_db(&[(
+        "s1",
+        "/cwd",
+        &[
+            ("user", "I love Rust programming"),
+            ("user", "Rust is safe"),
+            ("user", "I love learning"),
+            ("user", "Love and Rust together"),
+        ],
+    )]);
+
+    // any mode: matches any word (union)
+    let resp_any: FullTextSearchResponse = full_text_search(
+        "love Rust".to_string(),
+        "all".to_string(),
+        None,
+        0,
+        10,
+        Some("any".to_string()),
+    )
+    .await
+    .unwrap();
+    // All 4 messages contain either "love" or "rust", but per‑session limit is 3
+    assert_eq!(resp_any.total_hits, 3);
+    assert!(resp_any.hits.iter().all(|h| h.session_id == "s1"));
+    for hit in &resp_any.hits {
+        let content = hit.content.to_ascii_lowercase();
+        assert!(content.contains("love") || content.contains("rust"));
+    }
+
+    // all mode: requires both "love" and "rust"
+    let resp_all: FullTextSearchResponse = full_text_search(
+        "love Rust".to_string(),
+        "all".to_string(),
+        None,
+        0,
+        10,
+        Some("all".to_string()),
+    )
+    .await
+    .unwrap();
+    // msg0 and msg3 contain both words
+    assert_eq!(resp_all.total_hits, 2);
+    for hit in &resp_all.hits {
+        let content = hit.content.to_ascii_lowercase();
+        assert!(content.contains("love"));
+        assert!(content.contains("rust"));
+    }
+
+    // phrase mode: exact phrase "love Rust"
+    let resp_phrase: FullTextSearchResponse = full_text_search(
+        "love Rust".to_string(),
+        "all".to_string(),
+        None,
+        0,
+        10,
+        Some("phrase".to_string()),
+    )
+    .await
+    .unwrap();
+    // Only msg0 has contiguous "love Rust"
+    assert_eq!(resp_phrase.total_hits, 1);
+    let hit = &resp_phrase.hits[0];
+    assert_eq!(hit.entry_id, "s1-msg0");
+    let content = hit.content.to_ascii_lowercase();
+    assert!(content.contains("love rust"));
+
+    println!("✅ Match modes test passed!");
 }

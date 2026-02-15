@@ -53,6 +53,22 @@
 
 ---
 
+## Full-Text Search
+
+Press <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> to open the full‑text search modal from any view.
+
+**Features**:
+- **Search Modes**:
+  - `any` (default): matches any of the query words (OR semantics).
+  - `all`: matches sessions containing all the words (AND semantics).
+  - `phrase`: exact phrase match (word order and proximity preserved).
+- **Role Filter**: restrict results to `user` or `assistant` messages; default shows all.
+- **Path Globbing**: filter sessions by file path using `*` and `?` glob patterns (they are automatically converted to SQL `LIKE` with proper escaping).
+- **Ranking & Limits**: results are ranked by BM25 relevance. A per‑session limit of 3 ensures a diverse set of sessions; pagination allows browsing through all hits.
+- **Metrics**: when the metrics subsystem is enabled, detailed counters (query count, latency, result count) are available at the `/metrics` endpoint in the HTTP adapter.
+
+---
+
 ## Architecture
 
 ```
