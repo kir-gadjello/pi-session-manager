@@ -150,14 +150,19 @@ pub async fn dispatch(command: &str, payload: &Value) -> Result<Value, String> {
 
         "full_text_search" => {
             let query = extract_string(payload, "query")?;
-            let role_filter = extract_string(payload, "role_filter")?;
+            // Accept both snake_case and camelCase for role_filter
+            let role_filter = extract_string(payload, "role_filter")
+                .or_else(|_| extract_string(payload, "roleFilter"))
+                .map_err(|_| "Missing required field: role_filter or roleFilter")?;
             let glob_pattern = payload
                 .get("glob_pattern")
+                .or_else(|| payload.get("globPattern"))
                 .and_then(|v| v.as_str())
                 .map(String::from);
             let page = payload.get("page").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             let page_size = payload
                 .get("page_size")
+                .or_else(|| payload.get("pageSize"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(20) as usize;
             let result =
