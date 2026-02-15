@@ -4,7 +4,7 @@
 
 ### P0 - Critical (Fix immediately)
 
-- [ ] TASK-001: Fix relevance ranking in search results (use FTS5 BM25 rank)
+- [x] TASK-001: Fix relevance ranking in search results (use FTS5 BM25 rank)
 - [ ] TASK-002: Rebuild FTS index after virtual table recreation
 - [ ] TASK-007: Implement safe backup before destructive database recovery
 - [ ] TASK-014: Write high-power integration tests for all behaviors
