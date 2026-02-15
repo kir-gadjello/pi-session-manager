@@ -12,7 +12,21 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, error, info, warn};
 
 pub fn get_db_path() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("Cannot find home directory")?;
+    // Allow explicit test override
+    if let Ok(test_db) = std::env::var("PPM_TEST_DB") {
+        let path = PathBuf::from(test_db);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create test db dir: {}", e))?;
+        }
+        return Ok(path);
+    }
+
+    // Use HOME env var directly to respect runtime changes (e.g., in tests)
+    let home = match std::env::var("HOME") {
+        Ok(h) => PathBuf::from(h),
+        Err(_) => dirs::home_dir().ok_or("Cannot find home directory")?,
+    };
     let sessions_dir = home.join(".pi").join("agent").join("sessions");
     fs::create_dir_all(&sessions_dir)
         .map_err(|e| format!("Failed to create sessions dir: {}", e))?;
@@ -280,8 +294,8 @@ fn open_and_init_db(db_path: &Path, config: &Config) -> Result<Connection, Strin
     }
 
     if config.enable_fts5 {
-        init_fts5(&conn)?;
-        // Comprehensive schema check for message-level FTS
+        // init_fts5(&conn)?; // DISABLED: sessions_fts incompatible with sessions schema (TEXT PRIMARY KEY)
+        // Comprehensive schema check for message-level FTS only
         ensure_message_fts_schema(&conn)?;
     } else {
         // FTS disabled: ensure no leftover triggers for both message-level and session-level

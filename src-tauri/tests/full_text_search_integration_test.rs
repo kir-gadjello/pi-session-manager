@@ -1,4 +1,5 @@
 use chrono::Utc;
+use lazy_static::lazy_static;
 use pi_session_manager::commands::full_text_search;
 use pi_session_manager::config::Config;
 use pi_session_manager::models::{FullTextSearchHit, FullTextSearchResponse};
@@ -7,7 +8,12 @@ use pi_session_manager::sqlite_cache;
 use rusqlite::{params, Connection};
 use std::env;
 use std::fs;
+use std::sync::Mutex;
 use tempfile::tempdir;
+
+lazy_static! {
+    static ref TEST_DB_LOCK: Mutex<()> = Mutex::new(());
+}
 
 /// Helper: create a minimal session file with multiple messages
 fn make_session_file(id: &str, cwd: &str, messages: &[(&str, &str)]) -> String {
@@ -61,6 +67,9 @@ fn setup_test_db(sessions: &[(&str, &str, &[(&str, &str)])]) -> tempfile::TempDi
 
 #[tokio::test]
 async fn test_full_text_search_command_basic() {
+    // Acquire global test lock to prevent concurrent DB access
+    let _lock = TEST_DB_LOCK.lock().unwrap();
+
     // Setup sessions
     let _temp_dir = setup_test_db(&[
         (
@@ -208,6 +217,8 @@ async fn test_full_text_search_command_basic() {
 
 #[tokio::test]
 async fn test_full_text_search_pagination_across_sessions() {
+    let _lock = TEST_DB_LOCK.lock().unwrap();
+
     let _temp_dir = setup_test_db(&[
         ("s1", "/cwd1", &[("user", "apple"); 5]),
         ("s2", "/cwd2", &[("user", "banana"); 5]),
@@ -238,6 +249,8 @@ async fn test_full_text_search_pagination_across_sessions() {
 
 #[tokio::test]
 async fn test_full_text_search_result_structure() {
+    let _lock = TEST_DB_LOCK.lock().unwrap();
+
     let _temp_dir = setup_test_db(&[(
         "s1",
         "/projects/test",
@@ -273,6 +286,8 @@ async fn test_full_text_search_result_structure() {
 
 #[tokio::test]
 async fn test_full_text_search_escaping_special_chars() {
+    let _lock = TEST_DB_LOCK.lock().unwrap();
+
     let _temp_dir = setup_test_db(&[(
         "s1",
         "/cwd",
@@ -313,6 +328,8 @@ async fn test_full_text_search_escaping_special_chars() {
 
 #[tokio::test]
 async fn test_full_text_search_after_session_update() {
+    let _lock = TEST_DB_LOCK.lock().unwrap();
+
     let temp_dir = setup_test_db(&[(
         "s1",
         "/cwd",
@@ -365,6 +382,8 @@ async fn test_full_text_search_after_session_update() {
 
 #[tokio::test]
 async fn test_full_text_search_cascade_delete() {
+    let _lock = TEST_DB_LOCK.lock().unwrap();
+
     let temp_dir = setup_test_db(&[
         ("s1", "/cwd1", &[("user", "deleteme")]),
         ("s2", "/cwd2", &[("user", "keepme")]),

@@ -79,6 +79,11 @@ pub async fn dispatch(command: &str, payload: &Value) -> Result<Value, String> {
             let result = crate::get_session_entries(path).await?;
             Ok(serde_json::to_value(result).unwrap())
         }
+        "get_session_by_path" => {
+            let path = extract_string(payload, "path")?;
+            let result = crate::get_session_by_path(path).await?;
+            Ok(serde_json::to_value(result).unwrap())
+        }
         "delete_session" => {
             let path = extract_string(payload, "path")?;
             std::fs::remove_file(&path).map_err(|e| format!("Failed to delete session: {e}"))?;
