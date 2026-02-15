@@ -125,7 +125,7 @@ async fn test_full_text_search_command_basic() {
         "Expected sess1 to be in results"
     );
     assert!(response.hits.iter().all(|h| h.session_id == "sess1"));
-    assert!(response.hits[0].score > 0.0);
+    assert!(response.hits[0].score.is_finite());
 
     // Test 2: Search for "rust"
     let response: FullTextSearchResponse =
@@ -209,7 +209,7 @@ async fn test_full_text_search_command_basic() {
             .await
             .unwrap();
     for hit in &response.hits {
-        assert!(hit.score > 0.0);
+        assert!(hit.score.is_finite());
     }
 
     println!("✅ All full_text_search command tests passed!");
@@ -273,7 +273,7 @@ async fn test_full_text_search_result_structure() {
     // Timestamp is DateTime<Utc>; convert to RFC3339 string
     let ts_str = hit.timestamp.to_rfc3339();
     assert!(!ts_str.is_empty());
-    assert!(hit.score > 0.0);
+    assert!(hit.score.is_finite());
 
     assert!(hit.role == "user" || hit.role == "assistant");
     assert!(hit.session_path.ends_with(".jsonl"));

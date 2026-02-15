@@ -138,7 +138,7 @@ pub async fn full_text_search(
                 m.session_path,
                 m.role,
                 m.timestamp,
-                m.rowid as rank,
+                message_fts.rank as rank,
                 ROW_NUMBER() OVER (PARTITION BY m.session_path ORDER BY m.rowid) as rn_in_session
             FROM message_entries m
             JOIN message_fts ON m.rowid = message_fts.rowid

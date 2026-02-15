@@ -211,15 +211,21 @@ fn search_message_entries_with_params(
 
     let data_sql = format!(
         "WITH ranked AS (
-            SELECT m.id, m.session_path, m.role, m.timestamp, m.rowid as rank,
-                   ROW_NUMBER() OVER (PARTITION BY m.session_path ORDER BY m.rowid) as rn_in_session,
-                   ROW_NUMBER() OVER (ORDER BY m.rowid) as global_rn
+            SELECT 
+                m.id,
+                m.session_path,
+                m.role,
+                m.timestamp,
+                message_fts.rank as rank,
+                ROW_NUMBER() OVER (PARTITION BY m.session_path ORDER BY m.rowid) as rn_in_session
             FROM message_entries m
             JOIN message_fts ON m.rowid = message_fts.rowid
             {}
         ),
         filtered AS (
-            SELECT id, session_path, role, timestamp, rank, global_rn
+            SELECT 
+                id, session_path, role, timestamp, rank,
+                ROW_NUMBER() OVER (ORDER BY rank) as global_rn
             FROM ranked
             WHERE rn_in_session <= 3
         )
@@ -341,4 +347,32 @@ fn test_full_text_search_command_role_filter_and_glob() {
     // But we can just test with existing data; not needed
 
     println!("✅ Full-text search command logic tests passed!");
+}
+
+#[test]
+fn test_full_text_search_relevance_ranking() {
+    // Verify that search results are ordered by FTS5 BM25 rank, not insertion order.
+    // Insert two messages with different frequencies of the same term.
+    let conn = setup_in_memory_db_with_sessions(&[(
+        "s1",
+        "/cwd",
+        &[
+            ("user", "rust rust rust rust rust rust rust rust rust rust"),
+            ("user", "rust"),
+        ],
+    )]);
+
+    let (hits, total) =
+        search_message_entries_with_params(&conn, "rust", None, None, 0, 10).unwrap();
+    assert_eq!(total, 2);
+    assert_eq!(hits.len(), 2);
+    // The first hit should have a lower (better) rank than the second.
+    let rank_first = hits[0].5;
+    let rank_second = hits[1].5;
+    assert!(
+        rank_first < rank_second,
+        "Expected message with more occurrences to rank higher (lower score), got {} vs {}",
+        rank_first,
+        rank_second
+    );
 }
