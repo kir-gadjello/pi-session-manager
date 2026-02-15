@@ -139,14 +139,15 @@ function SessionViewerContent({ session, onExport, onRename, onBack, onWebResume
         if (cached) {
           setEntries(cached.entries)
           setLineCount(cached.lineCount)
-          if (initialEntryId && cached.entries.some(e => e.id === initialEntryId)) {
-            setActiveEntryId(initialEntryId)
-            pendingScrollToBottomRef.current = false
-          } else {
-            const lastMessage = cached.entries.filter(e => e.type === 'message').pop()
-            if (lastMessage) setActiveEntryId(lastMessage.id)
-            pendingScrollToBottomRef.current = true
+          // Always set active entry to last message (preserves full view for linear sessions)
+          const lastMessage = cached.entries.filter(e => e.type === 'message').pop()
+          if (lastMessage) {
+            setActiveEntryId(lastMessage.id)
+          } else if (cached.entries.length > 0) {
+            setActiveEntryId(cached.entries[0].id)
           }
+          // If navigating from FTS, suppress auto-scroll to bottom; otherwise enable
+          pendingScrollToBottomRef.current = !initialEntryId
           return
         }
 
@@ -169,16 +170,15 @@ function SessionViewerContent({ session, onExport, onRename, onBack, onWebResume
         setLineCount(lines)
         setEntries(parsedEntries)
 
-        if (initialEntryId && parsedEntries.some(e => e.id === initialEntryId)) {
-          setActiveEntryId(initialEntryId)
-          pendingScrollToBottomRef.current = false
-        } else {
-          const lastMessage = parsedEntries.filter(e => e.type === 'message').pop()
-          if (lastMessage) {
-            setActiveEntryId(lastMessage.id)
-          }
-          pendingScrollToBottomRef.current = true
+        // Always set active entry to last message (preserves full view for linear sessions)
+        const lastMessage = parsedEntries.filter(e => e.type === 'message').pop()
+        if (lastMessage) {
+          setActiveEntryId(lastMessage.id)
+        } else if (parsedEntries.length > 0) {
+          setActiveEntryId(parsedEntries[0].id)
         }
+        // If navigating from FTS, suppress auto-scroll to bottom; otherwise enable
+        pendingScrollToBottomRef.current = !initialEntryId
       } catch (err) {
         if (!cancelled) {
           console.error('[SessionViewer] Failed to load session:', err)
