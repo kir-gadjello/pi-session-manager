@@ -1,4 +1,0 @@
-
-> pi-session-manager@0.1.0 build
-> tsc && vite build
-
